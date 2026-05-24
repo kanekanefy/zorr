@@ -133,6 +133,10 @@ namespace {
 }
 ```
 
+### gardn 上游 header 缺 include guard
+
+某些 header（已知:`Client/Ui/StaticIcon.hh`)上游没有 `#pragma once`,但已经被 `Ui.hh` 间接 include。如果你在新 .cc 文件里**显式**再 include 一次,会触发 "redefinition of 'X'" 编译错误。**习惯**:新 .cc 文件的 include 列表从 sibling 已有 .cc(比如 `Settings.cc`/`Changelog.cc`)复制粘贴,不要自己列。
+
 ### MobID / PetalID 同名陷阱
 
 `MobID` 和 `PetalID` 是不同 namespace,理论上 `MobID::kBubble` 和 `PetalID::kBubble` 可以共存。但**人眼会混淆**。约定:mob 加 `Mob` 后缀(`kBubbleMob`)如果和已有 petal 同名。已发生:patch 0008。
