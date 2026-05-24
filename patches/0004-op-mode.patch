@@ -79,26 +79,27 @@ new file mode 100644
 index 0000000..45beedb
 --- /dev/null
 +++ b/Shared/OpMode.hh
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,21 @@
 +#pragma once
 +
 +// zorr OP-Mode tunables — Phase 1: compile-time constants.
++// "Super Fun Mode" preset — designed for ~30-minute full-content runs.
 +// Phase 2 will replace these with values loaded from /etc/zorr/op-config.json.
 +
 +namespace OpMode {
-+    // Leveling
-+    inline constexpr float LEVEL_DIV = 10.0f;        // XP-to-next-level divided by this
-+    inline constexpr float XP_MULT = 5.0f;           // XP awarded per kill * this
++    // Leveling (秒升级)
++    inline constexpr float LEVEL_DIV = 100.0f;       // XP-to-next-level divided by this
++    inline constexpr float XP_MULT = 50.0f;          // XP awarded per kill * this
 +    inline constexpr bool  ALL_SLOTS_FROM_START = true;
 +
-+    // Survivability
-+    inline constexpr float HP_MULT = 2.0f;           // Flower HP * this
-+    inline constexpr float PETAL_DMG_MULT = 3.0f;    // Petal-to-mob damage * this
-+    inline constexpr float MOB_DMG_MULT = 0.5f;      // Mob-to-flower damage * this
++    // Survivability (近乎不死)
++    inline constexpr float HP_MULT = 10.0f;          // Flower HP * this
++    inline constexpr float PETAL_DMG_MULT = 20.0f;   // Petal-to-mob damage * this
++    inline constexpr float MOB_DMG_MULT = 0.1f;      // Mob-to-flower damage * this
 +
-+    // Economy
-+    inline constexpr float DROP_MULT = 5.0f;         // Drop chance * this
-+    inline constexpr float DENSITY_MULT = 3.0f;      // Mob density * this
++    // Economy (掉爆 + 怪满屏)
++    inline constexpr float DROP_MULT = 20.0f;        // Drop chance * this (capped at 1.0 by frand)
++    inline constexpr float DENSITY_MULT = 5.0f;      // Mob density * this
 +}
 diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
 index 4e2d3d3..c32d9d1 100644

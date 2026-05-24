@@ -1,0 +1,30 @@
+diff --git a/Server/Spawn.cc b/Server/Spawn.cc
+index b0907c2..15d09cc 100644
+--- a/Server/Spawn.cc
++++ b/Server/Spawn.cc
+@@ -236,6 +236,25 @@ void player_spawn(Simulation *sim, Entity &camera, Entity &player) {
+     player.set_score(level_to_score(camera.get_respawn_level()));
+     player.set_loadout_count(loadout_slots_at_level(camera.get_respawn_level()));
+     player.health = player.max_health = hp_at_level(camera.get_respawn_level());
++
++    // zorr Super Fun Mode: on initial spawn (no prior inventory), seed an OP starter loadout.
++    // After death, Death.cc populates camera.inventory with kBasic + survived petals, so this
++    // condition is only true for a truly fresh spawn — respawns get the normal flow.
++    if (camera.get_inventory(0) == PetalID::kNone) {
++        static PetalID::T const OP_STARTERS[8] = {
++            PetalID::kHeaviest,
++            PetalID::kStinger,
++            PetalID::kYggdrasil,
++            PetalID::kRose,
++            PetalID::kFaster,
++            PetalID::kTricac,
++            PetalID::kTriplet,
++            PetalID::kPeas,
++        };
++        for (uint32_t i = 0; i < 8 && i < MAX_SLOT_COUNT; ++i)
++            camera.set_inventory(i, OP_STARTERS[i]);
++    }
++
+     for (uint32_t i = 0; i < player.get_loadout_count(); ++i) {
+         PetalID::T id = camera.get_inventory(i);
+         LoadoutSlot &slot = player.loadout[i];
