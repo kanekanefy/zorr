@@ -298,10 +298,10 @@ index e07dc52..d4a878d 100644
      extern double window_width;
 diff --git a/Client/Ui/TitleScreen/Craft.cc b/Client/Ui/TitleScreen/Craft.cc
 new file mode 100644
-index 0000000..0852cfd
+index 0000000..36535bc
 --- /dev/null
 +++ b/Client/Ui/TitleScreen/Craft.cc
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,161 @@
 +// Phase 6 craft: Craft panel — lottery-style 5→1 rarity upgrade.
 +//
 +// Design recap (user-chosen):
@@ -330,8 +330,23 @@ index 0000000..0852cfd
 +#include <Helpers/Math.hh>
 +
 +#include <format>
++#include <unordered_map>
 +
 +using namespace Ui;
++
++// File-scope (NOT anonymous-namespace) so the `extern` declarations inside
++// the on_click lambda below find the matching definitions with the same
++// linkage. Wrapping in `namespace {}` would give these internal linkage and
++// the lambda's extern decls would search for external — broken link.
++static std::unordered_map<Element *, uint8_t> g_craft_rarity_map;
++
++void register_craft_button(Element *btn, uint8_t rarity) {
++    g_craft_rarity_map[btn] = rarity;
++}
++uint8_t craft_rarity_for_button(Element *btn) {
++    auto it = g_craft_rarity_map.find(btn);
++    return (it == g_craft_rarity_map.end()) ? 0 : it->second;
++}
 +
 +namespace {
 +    constexpr float SUCCESS_RATE_DISPLAY[RarityID::kNumRarities] =
@@ -373,20 +388,20 @@ index 0000000..0852cfd
 +        // NOTE: Button's `should_darken` is a non-capturing function pointer,
 +        // so we can't bind `rarity` into it. We skip darken — feedback comes
 +        // via the status text at the bottom (try_craft sets last_craft_*).
++        // `craft_rarity_for_button` and `register_craft_button` are file-scope
++        // helpers defined at the top — found via normal unqualified lookup
++        // here, no `extern` decl needed (one inside an anonymous namespace
++        // would be interpreted as anon-namespace-scoped → internal linkage,
++        // broken link).
 +        Ui::Button *btn = new Ui::Button(90, 28,
 +            new Ui::StaticText(13, "Craft 5", { .fill = 0xffffffff }),
 +            [](Element *e, uint8_t event) {
 +                if (event != Ui::kClick) return;
-+                extern uint8_t craft_rarity_for_button(Element *);
-+                uint8_t r = craft_rarity_for_button(e);
-+                Game::try_craft(r);
++                Game::try_craft(craft_rarity_for_button(e));
 +            },
 +            nullptr,
 +            { .fill = 0xff3a8a3a, .stroke_hsv = 0.7, .line_width = 3, .round_radius = 4 }
 +        );
-+
-+        // Stash the rarity on the button using a static map (defined below).
-+        extern void register_craft_button(Element *, uint8_t);
 +        register_craft_button(btn, rarity);
 +
 +        return new Ui::HContainer({
@@ -412,18 +427,9 @@ index 0000000..0852cfd
 +    }
 +}
 +
-+// Hacky-but-effective: map Button* → rarity so the on_click lambda can
-+// know which rarity to craft without per-rarity-typed subclasses.
-+#include <unordered_map>
-+static std::unordered_map<Element *, uint8_t> g_craft_rarity_map;
-+
-+void register_craft_button(Element *btn, uint8_t rarity) {
-+    g_craft_rarity_map[btn] = rarity;
-+}
-+uint8_t craft_rarity_for_button(Element *btn) {
-+    auto it = g_craft_rarity_map.find(btn);
-+    return (it == g_craft_rarity_map.end()) ? 0 : it->second;
-+}
++// (g_craft_rarity_map + register/lookup helpers are defined at top of file
++// so they have external linkage and the extern decls inside the lambdas
++// link correctly.)
 +
 +Element *Ui::make_craft_panel() {
 +    std::vector<Element *> rows;
@@ -459,10 +465,10 @@ index 0000000..0852cfd
 +}
 diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
 new file mode 100644
-index 0000000..0390d9d
+index 0000000..8af814f
 --- /dev/null
 +++ b/Client/Ui/TitleScreen/Inventory.cc
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,127 @@
 +// Phase 6 craft: Inventory panel — shows lifetime pickups per petal.
 +// One row per rarity, grid of petals within. Count shown under each tile
 +// using format_score() so 5_000 → "5k", 5_000_000 → "5m", etc.
@@ -503,13 +509,16 @@ index 0000000..0390d9d
 +        }
 +        virtual void on_render(Renderer &ctx) override {
 +            Element::on_render(ctx);
-+            // Draw count text FIRST (pre-scale). Position at bottom of cell.
++            // Draw count text FIRST. TextArgs has no `.y` — translate then
++            // draw, then translate back. Drift text to bottom of cell.
 +            uint32_t n = Game::persistent_inventory[id];
++            float text_y = height / 2 - 8;
++            ctx.translate(0, text_y);
 +            ctx.draw_text(format_score((float)n).c_str(), {
 +                .fill = 0xffffffff,
-+                .size = 10,
-+                .y = height / 2 - 8
++                .size = 10
 +            });
++            ctx.translate(0, -text_y);
 +            // Then scale + translate + petal — done LAST so scale doesn't
 +            // bleed into text (no save/restore in this Renderer API; we
 +            // rely on Element render isolation between siblings).
@@ -528,15 +537,17 @@ index 0000000..0390d9d
 +    };
 +
 +    Element *make_rarity_row(uint8_t rarity) {
++        // Style field order: ... animate, should_render, h_justify, v_justify ...
++        // (ISO C++ requires designators in declaration order.)
 +        Element *row = new Ui::HContainer({}, 0, 6, {
-+            .h_justify = Style::Left,
 +            .should_render = [rarity]() {
 +                for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
 +                    if (PETAL_DATA[id].rarity == rarity && Game::persistent_inventory[id] > 0)
 +                        return true;
 +                }
 +                return false;
-+            }
++            },
++            .h_justify = Style::Left
 +        });
 +        // rarity label (e.g. "Common")
 +        row->add_child(new Ui::StaticText(13, RARITY_NAMES[rarity], {
