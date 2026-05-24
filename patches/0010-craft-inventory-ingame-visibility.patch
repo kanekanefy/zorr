@@ -1,0 +1,962 @@
+diff --git a/Client/CMakeLists.txt b/Client/CMakeLists.txt
+index f9d901b..9fe42b6 100644
+--- a/Client/CMakeLists.txt
++++ b/Client/CMakeLists.txt
+@@ -45,6 +45,7 @@ set(SRCS
+     Ui/TitleScreen/DeathScreen.cc
+     Ui/TitleScreen/Inventory.cc
+     Ui/TitleScreen/MainScreen.cc
++    Ui/TitleScreen/MetaSidebar.cc
+     Ui/TitleScreen/MobGallery.cc
+     Ui/TitleScreen/PetalGallery.cc
+     Ui/TitleScreen/Settings.cc
+diff --git a/Client/Game.cc b/Client/Game.cc
+index 7fc484b..840c09a 100644
+--- a/Client/Game.cc
++++ b/Client/Game.cc
+@@ -41,6 +41,14 @@ namespace Game {
+     uint8_t    last_craft_destroyed = 0;
+     double     last_craft_timestamp = -1000;
+ 
++    // Patch 0010: slot-based craft state. Pet slots hold specific PetalIDs the
++    // player has clicked into the Craft panel. craft_slot_count tracks how
++    // many slots are filled. craft_active_rarity is the rarity tab the user
++    // has open in the panel; switching tabs clears slots.
++    PetalID::T craft_slots[5] = {PetalID::kNone, PetalID::kNone, PetalID::kNone, PetalID::kNone, PetalID::kNone};
++    uint8_t    craft_slot_count = 0;
++    uint8_t    craft_active_rarity = RarityID::kCommon;
++
+     double timestamp = 0;
+ 
+     double score = 0;
+@@ -92,13 +100,11 @@ void Game::init() {
+     title_ui_window.add_child(
+         Ui::make_changelog()
+     );
+-    // Phase 6 craft: register Inventory + Craft panels
+-    title_ui_window.add_child(
+-        Ui::make_inventory_panel()
+-    );
+-    title_ui_window.add_child(
+-        Ui::make_craft_panel()
+-    );
++    // Phase 6 craft (Patch 0010): Inventory + Craft panels live in
++    // other_ui_window now (always-rendered layer) so they stay open after
++    // the player clicks Play and the title screen fades out. The sidebar
++    // button container also goes into other_ui_window for the same reason.
++    // (See Ui::make_meta_sidebar / make_inventory_panel / make_craft_panel.)
+     title_ui_window.add_child(
+         Ui::make_github_link_button()
+     );
+@@ -139,6 +145,16 @@ void Game::init() {
+         }, 20, 0, { .h_justify = Ui::Style::Left, .v_justify = Ui::Style::Top })
+     );
+     Ui::make_petal_tooltips();
++    // Patch 0010: meta-game UI in always-on layer (visible title + in game).
++    other_ui_window.add_child(
++        Ui::make_meta_sidebar()
++    );
++    other_ui_window.add_child(
++        Ui::make_inventory_panel()
++    );
++    other_ui_window.add_child(
++        Ui::make_craft_panel()
++    );
+     other_ui_window.add_child(
+         Ui::make_debug_stats()
+     );
+@@ -465,4 +481,112 @@ PetalID::T Game::try_craft(uint8_t rarity) {
+         Game::last_craft_timestamp = Game::timestamp;
+         return PetalID::kNone;
+     }
++}
++
++// --- Patch 0010: slot-based craft API ------------------------------------
++//
++// The craft panel UI lets the player click 5 specific petals into 5 slots,
++// then hit Craft. This is more strategic than the original "random 5 of
++// rarity X" because the player chooses which low-value petals to burn.
++//
++// Rules:
++//   - All 5 slots must be the same rarity (the active tab).
++//   - Switching the active rarity tab clears slots (so you don't accidentally
++//     mix tiers).
++//   - A petal can occupy multiple slots if you own enough copies — e.g. 5
++//     Roses → 5 Rose slots. craft_slots_add_petal verifies inventory minus
++//     slots-already-using-this-petal is ≥ 1.
++//   - Craft consumes the exact 5 slotted petals, then uses the same
++//     success/destroy rules as try_craft(rarity).
++
++void Game::craft_slots_reset() {
++    for (uint8_t i = 0; i < 5; ++i) Game::craft_slots[i] = PetalID::kNone;
++    Game::craft_slot_count = 0;
++}
++
++void Game::craft_slots_set_rarity(uint8_t rarity) {
++    if (rarity >= RarityID::kNumRarities) return;
++    if (rarity != Game::craft_active_rarity) Game::craft_slots_reset();
++    Game::craft_active_rarity = rarity;
++}
++
++bool Game::craft_slots_add_petal(PetalID::T id) {
++    if (id == PetalID::kNone || id >= PetalID::kNumPetals) return false;
++    if (PETAL_DATA[id].rarity != Game::craft_active_rarity) return false;
++    if (Game::craft_slot_count >= 5) return false;
++    // How many of this petal are already in slots?
++    uint32_t slotted = 0;
++    for (uint8_t i = 0; i < Game::craft_slot_count; ++i)
++        if (Game::craft_slots[i] == id) slotted++;
++    if (Game::persistent_inventory[id] <= slotted) return false;  // not enough left
++    Game::craft_slots[Game::craft_slot_count++] = id;
++    return true;
++}
++
++PetalID::T Game::try_craft_from_slots() {
++    if (Game::craft_slot_count != 5) {
++        Game::last_craft_result    = PetalID::kNone;
++        Game::last_craft_success   = 0;
++        Game::last_craft_destroyed = 0;
++        Game::last_craft_timestamp = Game::timestamp;
++        return PetalID::kNone;
++    }
++    uint8_t rarity = Game::craft_active_rarity;
++    if (rarity >= RarityID::kNumRarities - 1) {
++        // Top tier — no upgrade target.
++        Game::craft_slots_reset();
++        Game::last_craft_result    = PetalID::kNone;
++        Game::last_craft_success   = 0;
++        Game::last_craft_destroyed = 0;
++        Game::last_craft_timestamp = Game::timestamp;
++        return PetalID::kNone;
++    }
++
++    // Snapshot the consumed list before mutating inventory.
++    PetalID::T consumed[5];
++    for (uint8_t i = 0; i < 5; ++i) consumed[i] = Game::craft_slots[i];
++    // Consume from inventory.
++    for (uint8_t i = 0; i < 5; ++i) {
++        if (Game::persistent_inventory[consumed[i]] > 0)
++            Game::persistent_inventory[consumed[i]]--;
++    }
++    Game::craft_slots_reset();
++
++    // Same success table as the random-5 path — picks intentionally don't
++    // change odds; they just give the player agency over which copies burn.
++    constexpr float SUCCESS_RATES[RarityID::kNumRarities] =
++        {0.60f, 0.45f, 0.30f, 0.20f, 0.12f, 0.06f, 0.03f};
++    if (frand() < SUCCESS_RATES[rarity]) {
++        std::vector<PetalID::T> next_pool;
++        for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id)
++            if (PETAL_DATA[id].rarity == rarity + 1) next_pool.push_back(id);
++        if (next_pool.empty()) {
++            // No higher-rarity defined — refund.
++            for (uint8_t i = 0; i < 5; ++i) Game::persistent_inventory[consumed[i]]++;
++            Game::last_craft_result    = PetalID::kNone;
++            Game::last_craft_success   = 0;
++            Game::last_craft_destroyed = 0;
++            Game::last_craft_timestamp = Game::timestamp;
++            return PetalID::kNone;
++        }
++        PetalID::T result = next_pool[(uint32_t)(frand() * next_pool.size())];
++        Game::persistent_inventory[result]++;
++        Game::seen_petals[result] = 1;
++        Game::last_craft_result    = result;
++        Game::last_craft_success   = 1;
++        Game::last_craft_destroyed = 0;
++        Game::last_craft_timestamp = Game::timestamp;
++        return result;
++    }
++    // Fail: destroy 1..4, refund 5-N.
++    uint8_t destroyed = 1 + (uint8_t)(frand() * 4);
++    if (destroyed > 4) destroyed = 4;
++    for (uint8_t i = destroyed; i < 5; ++i) {
++        Game::persistent_inventory[consumed[i]]++;
++    }
++    Game::last_craft_result    = PetalID::kNone;
++    Game::last_craft_success   = 0;
++    Game::last_craft_destroyed = destroyed;
++    Game::last_craft_timestamp = Game::timestamp;
++    return PetalID::kNone;
+ }
+\ No newline at end of file
+diff --git a/Client/Game.hh b/Client/Game.hh
+index 23d0f07..e294415 100644
+--- a/Client/Game.hh
++++ b/Client/Game.hh
+@@ -38,6 +38,18 @@ namespace Game {
+     extern uint8_t    last_craft_destroyed;
+     extern double     last_craft_timestamp;
+     PetalID::T try_craft(uint8_t rarity);
++    // Slot-based craft (Phase 6 Patch 0010): player picks 5 specific petals
++    // into craft_slots[0..craft_slot_count-1] via the Craft panel grid,
++    // then Craft button consumes them. craft_active_rarity is which rarity
++    // tab is selected — petals from other rarities can't be added.
++    // 0xff in a slot = empty.
++    extern PetalID::T craft_slots[5];
++    extern uint8_t    craft_slot_count;
++    extern uint8_t    craft_active_rarity;
++    void craft_slots_reset();
++    void craft_slots_set_rarity(uint8_t rarity);  // also clears slots if rarity changes
++    bool craft_slots_add_petal(PetalID::T id);    // returns false if can't add (wrong rarity / full / insufficient inventory after accounting for slots)
++    PetalID::T try_craft_from_slots();             // consumes slots, rolls success, returns crafted petal or kNone
+     
+     extern double timestamp;
+     
+diff --git a/Client/Ui/TitleScreen/Craft.cc b/Client/Ui/TitleScreen/Craft.cc
+index 36535bc..251b2b7 100644
+--- a/Client/Ui/TitleScreen/Craft.cc
++++ b/Client/Ui/TitleScreen/Craft.cc
+@@ -1,15 +1,19 @@
+-// Phase 6 craft: Craft panel — lottery-style 5→1 rarity upgrade.
++// Phase 6 craft (Patch 0010 rewrite): proper slot-selection UI.
+ //
+-// Design recap (user-chosen):
+-//   - For each rarity 0..5 (Common..Mythic): row showing
+-//       * rarity name (color)
+-//       * total petals owned at this tier
+-//       * success rate %
+-//       * "Craft 5" button (greyed if <5)
+-//   - Output: 1 random petal of next rarity, added to persistent_inventory
+-//   - Fail: 1-4 random consumed petals destroyed (refund 5-N)
++// Layout (vertical):
++//   1. Title + brief rules
++//   2. 5 slot displays + Reset button (slots show what's queued)
++//   3. Success rate text + Craft button
++//   4. Rarity tabs (Common / Unusual / Rare / Epic / Legendary / Mythic)
++//      — Unique (top tier) omitted because no upgrade target exists.
++//   5. Grid of YOUR petals at the active rarity. Click a cell → adds to next
++//      empty slot (only if same rarity + you own > slots-using-it copies).
++//   6. Last-result status line (5s ephemeral).
+ //
+-// Last result is rendered as a status line at the bottom for ~5s.
++// Two button-pointer→state maps live at file scope (NOT in `namespace {}`
++// — anonymous namespace traps `extern` decls in internal linkage). The
++// inner lambdas look up state via these maps because Button on_click is a
++// non-capturing function pointer.
+ 
+ #include <Client/Ui/TitleScreen/TitleScreen.hh>
+ 
+@@ -18,6 +22,7 @@
+ #include <Client/Ui/StaticText.hh>
+ #include <Client/Ui/DynamicText.hh>
+ #include <Client/Ui/Extern.hh>
++#include <Client/Ui/InGame/Loadout.hh>
+ 
+ #include <Client/Assets/Assets.hh>
+ #include <Client/Game.hh>
+@@ -27,131 +32,257 @@
+ 
+ #include <format>
+ #include <unordered_map>
++#include <vector>
+ 
+ using namespace Ui;
+ 
+-// File-scope (NOT anonymous-namespace) so the `extern` declarations inside
+-// the on_click lambda below find the matching definitions with the same
+-// linkage. Wrapping in `namespace {}` would give these internal linkage and
+-// the lambda's extern decls would search for external — broken link.
+-static std::unordered_map<Element *, uint8_t> g_craft_rarity_map;
+-
+-void register_craft_button(Element *btn, uint8_t rarity) {
+-    g_craft_rarity_map[btn] = rarity;
+-}
+-uint8_t craft_rarity_for_button(Element *btn) {
+-    auto it = g_craft_rarity_map.find(btn);
+-    return (it == g_craft_rarity_map.end()) ? 0 : it->second;
+-}
++// Button → rarity (for tab buttons)
++static std::unordered_map<Element *, uint8_t> g_craft_tab_map;
++// Button → petal_id (for selectable petal cells)
++static std::unordered_map<Element *, uint8_t> g_craft_cell_map;
+ 
+ namespace {
+-    constexpr float SUCCESS_RATE_DISPLAY[RarityID::kNumRarities] =
+-        {0.60f, 0.45f, 0.30f, 0.20f, 0.12f, 0.06f, 0.03f};
+ 
+-    uint32_t total_at_rarity(uint8_t rarity) {
+-        uint32_t total = 0;
+-        for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
+-            if (PETAL_DATA[id].rarity == rarity)
+-                total += Game::persistent_inventory[id];
++constexpr float SUCCESS_RATES[RarityID::kNumRarities] =
++    {0.60f, 0.45f, 0.30f, 0.20f, 0.12f, 0.06f, 0.03f};
++
++// ------- slot display (read-only render of Game::craft_slots[i]) ---------
++class CraftSlot final : public Element {
++public:
++    uint8_t idx;
++    CraftSlot(uint8_t i) : Element(48, 48, {
++        .fill = 0xff444444,
++        .stroke_hsv = 0.7,
++        .line_width = 2,
++        .round_radius = 6
++    }), idx(i) {}
++    virtual void on_render(Renderer &ctx) override {
++        // Refresh fill color based on whether occupied
++        uint8_t pid = Game::craft_slots[idx];
++        if (pid != PetalID::kNone) {
++            style.fill = RARITY_COLORS[PETAL_DATA[pid].rarity];
++        } else {
++            style.fill = 0xff444444;
+         }
+-        return total;
++        Element::on_render(ctx);
++        if (pid == PetalID::kNone) return;
++        ctx.scale(width / 60);
++        draw_loadout_background(ctx, pid);
+     }
++};
+ 
+-    Element *make_rarity_craft_row(uint8_t rarity) {
+-        // Don't show row for top rarity — nothing to upgrade to.
+-        bool is_top = (rarity >= RarityID::kNumRarities - 1);
+-
+-        Element *label = new Ui::StaticText(15, RARITY_NAMES[rarity], {
+-            .fill = RARITY_COLORS[rarity],
+-            .h_justify = Style::Left
++// ------- selectable inventory petal cell (in the rarity grid) -----------
++class CraftCell final : public Element {
++public:
++    PetalID::T id;
++    CraftCell(PetalID::T pid) : Element(56, 70, {
++        .fill = RARITY_COLORS[PETAL_DATA[pid].rarity],
++        .stroke_hsv = 0.85,
++        .line_width = 2,
++        .round_radius = 4,
++        .should_render = [pid]() {
++            // Only show if this petal matches the active rarity AND inventory > 0
++            return PETAL_DATA[pid].rarity == Game::craft_active_rarity
++                && Game::persistent_inventory[pid] > 0;
++        },
++        .v_justify = Style::Top
++    }), id(pid) {}
++    virtual void on_render(Renderer &ctx) override {
++        Element::on_render(ctx);
++        // Available = inventory - already-slotted-of-this-id
++        uint32_t inv = Game::persistent_inventory[id];
++        uint32_t slotted = 0;
++        for (uint8_t i = 0; i < Game::craft_slot_count; ++i)
++            if (Game::craft_slots[i] == id) slotted++;
++        uint32_t avail = (slotted >= inv) ? 0 : (inv - slotted);
++        // Count text at bottom
++        float text_y = height / 2 - 8;
++        ctx.translate(0, text_y);
++        ctx.draw_text(format_score((float)avail).c_str(), {
++            .fill = (avail > 0) ? 0xffffffff : 0xff888888,
++            .size = 10
+         });
++        ctx.translate(0, -text_y);
++        // Petal sprite above
++        ctx.translate(0, -8);
++        ctx.scale(width / 60);
++        draw_loadout_background(ctx, id);
++    }
++    virtual void on_event(uint8_t event) override {
++        if (event != kFocusLost) {
++            rendering_tooltip = 1;
++            tooltip = Ui::UiLoadout::petal_tooltips[id];
++        } else {
++            rendering_tooltip = 0;
++        }
++    }
++};
+ 
+-        Element *count_text = new Ui::DynamicText(13, [rarity]() {
+-            return std::format("({}/5 available)", total_at_rarity(rarity));
+-        }, { .fill = 0xffeeeeee, .h_justify = Style::Left });
++// ------- handlers --------------------------------------------------------
++void on_tab_click(Element *e, uint8_t event) {
++    if (event != Ui::kClick) return;
++    auto it = g_craft_tab_map.find(e);
++    if (it == g_craft_tab_map.end()) return;
++    Game::craft_slots_set_rarity(it->second);
++}
+ 
+-        Element *rate_text = new Ui::StaticText(13,
+-            std::format("{:.0f}% success", SUCCESS_RATE_DISPLAY[rarity] * 100),
+-            { .fill = 0xffcccccc, .h_justify = Style::Left });
++void on_cell_click(Element *e, uint8_t event) {
++    if (event != Ui::kClick) return;
++    auto it = g_craft_cell_map.find(e);
++    if (it == g_craft_cell_map.end()) return;
++    Game::craft_slots_add_petal((PetalID::T)it->second);
++}
+ 
+-        if (is_top) {
+-            return new Ui::HContainer({
+-                label,
+-                new Ui::StaticText(13, "(max tier)", { .fill = 0xff999999, .h_justify = Style::Left })
+-            }, 0, 8, { .h_justify = Style::Left });
+-        }
++void on_reset_click(Element *, uint8_t event) {
++    if (event != Ui::kClick) return;
++    Game::craft_slots_reset();
++}
++
++void on_craft_click(Element *, uint8_t event) {
++    if (event != Ui::kClick) return;
++    Game::try_craft_from_slots();
++}
++
++// ------- builders --------------------------------------------------------
++Element *make_slot_row() {
++    std::vector<Element *> kids;
++    for (uint8_t i = 0; i < 5; ++i) kids.push_back(new CraftSlot(i));
++    kids.push_back(new Ui::Button(60, 28,
++        new Ui::StaticText(12, "Reset", { .fill = 0xffffffff }),
++        on_reset_click, nullptr,
++        { .fill = 0xff8a3a3a, .stroke_hsv = 0.7, .line_width = 2, .round_radius = 4 }));
++    return new Ui::HContainer(kids, 0, 6, { .h_justify = Style::Left });
++}
++
++Element *make_craft_action_row() {
++    Element *rate = new Ui::DynamicText(13, []() {
++        uint8_t r = Game::craft_active_rarity;
++        uint8_t filled = Game::craft_slot_count;
++        if (r >= RarityID::kNumRarities - 1) return std::string("Top tier — no upgrade.");
++        if (filled < 5) return std::format("Pick {} more petal{}.", 5 - filled, (5 - filled) == 1 ? "" : "s");
++        return std::format("Success rate: {:.0f}%", SUCCESS_RATES[r] * 100);
++    }, { .fill = 0xffcccccc, .h_justify = Style::Left });
+ 
+-        // NOTE: Button's `should_darken` is a non-capturing function pointer,
+-        // so we can't bind `rarity` into it. We skip darken — feedback comes
+-        // via the status text at the bottom (try_craft sets last_craft_*).
+-        // `craft_rarity_for_button` and `register_craft_button` are file-scope
+-        // helpers defined at the top — found via normal unqualified lookup
+-        // here, no `extern` decl needed (one inside an anonymous namespace
+-        // would be interpreted as anon-namespace-scoped → internal linkage,
+-        // broken link).
+-        Ui::Button *btn = new Ui::Button(90, 28,
+-            new Ui::StaticText(13, "Craft 5", { .fill = 0xffffffff }),
+-            [](Element *e, uint8_t event) {
+-                if (event != Ui::kClick) return;
+-                Game::try_craft(craft_rarity_for_button(e));
+-            },
+-            nullptr,
+-            { .fill = 0xff3a8a3a, .stroke_hsv = 0.7, .line_width = 3, .round_radius = 4 }
+-        );
+-        register_craft_button(btn, rarity);
+-
+-        return new Ui::HContainer({
+-            label,
+-            count_text,
+-            rate_text,
+-            btn
+-        }, 0, 10, { .h_justify = Style::Left });
++    Ui::Button *craft_btn = new Ui::Button(100, 32,
++        new Ui::StaticText(14, "Craft", { .fill = 0xffffffff }),
++        on_craft_click, nullptr,
++        { .fill = 0xff3a8a3a, .stroke_hsv = 0.7, .line_width = 3, .round_radius = 4 });
++
++    return new Ui::HContainer({ rate, craft_btn }, 0, 14, { .h_justify = Style::Left });
++}
++
++Element *make_tab_button(uint8_t rarity) {
++    Ui::Button *btn = new Ui::Button(70, 26,
++        new Ui::StaticText(11, RARITY_NAMES[rarity], { .fill = 0xffffffff }),
++        on_tab_click, nullptr,
++        { .fill = RARITY_COLORS[rarity], .stroke_hsv = 0.6, .line_width = 2, .round_radius = 3 });
++    g_craft_tab_map[btn] = rarity;
++    return btn;
++}
++
++Element *make_tab_row() {
++    std::vector<Element *> tabs;
++    // Skip the top tier (Unique = idx 6) — no upgrade target.
++    for (uint8_t r = 0; r < RarityID::kNumRarities - 1; ++r) {
++        tabs.push_back(make_tab_button(r));
+     }
++    return new Ui::HContainer(tabs, 0, 4, { .h_justify = Style::Left });
++}
++
++Element *make_cell_button(PetalID::T pid) {
++    // Wrap CraftCell in a Button so it's clickable. The Button itself has a
++    // transparent fill (the inner Cell does its own rarity-colored fill).
++    auto *cell = new CraftCell(pid);
++    Ui::Button *btn = new Ui::Button(56, 70, cell, on_cell_click, nullptr,
++        { .fill = 0x00000000, .stroke_hsv = 0.0, .line_width = 0, .round_radius = 0 });
++    g_craft_cell_map[btn] = pid;
++    return btn;
++}
+ 
+-    Element *make_last_result_text() {
+-        return new Ui::DynamicText(13, []() {
+-            double age = Game::timestamp - Game::last_craft_timestamp;
+-            if (age > 5.0 || Game::last_craft_timestamp < 0) return std::string("");
+-            if (Game::last_craft_success) {
+-                return std::format("✓ Crafted: {}", PETAL_DATA[Game::last_craft_result].name);
+-            } else if (Game::last_craft_destroyed > 0) {
+-                return std::format("✗ Failed. Destroyed {} of 5.", Game::last_craft_destroyed);
+-            } else {
+-                return std::string("Not enough petals (need 5).");
++Element *make_petal_grid() {
++    // 6-column grid; pre-built for all rarities. Each row's should_render
++    // matches the active rarity tab. gardn's UI tree is immutable at runtime
++    // — we can't create/destroy Elements as the rarity tab changes — so we
++    // pre-build everything and hide non-matching rows.
++    constexpr uint8_t COLS = 6;
++    Element *grid = new Ui::VContainer({}, 0, 6, { .h_justify = Style::Left });
++
++    for (uint8_t r = 0; r < RarityID::kNumRarities - 1; ++r) {
++        std::vector<PetalID::T> ids;
++        for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
++            if (PETAL_DATA[id].rarity == r) ids.push_back(id);
++        }
++        for (size_t i = 0; i < ids.size(); i += COLS) {
++            std::vector<Element *> row_kids;
++            for (size_t j = i; j < i + COLS && j < ids.size(); ++j) {
++                row_kids.push_back(make_cell_button(ids[j]));
+             }
+-        }, { .fill = 0xffffe066, .h_justify = Style::Left });
++            uint8_t this_r = r;
++            Element *row = new Ui::HContainer(row_kids, 0, 6, {
++                .should_render = [this_r]() {
++                    return Game::craft_active_rarity == this_r;
++                },
++                .h_justify = Style::Left
++            });
++            grid->add_child(row);
++        }
+     }
++    grid->add_child(new Ui::DynamicText(11, []() {
++        for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
++            if (PETAL_DATA[id].rarity == Game::craft_active_rarity
++                && Game::persistent_inventory[id] > 0) return std::string("");
++        }
++        return std::string("(no petals at this rarity — go pick some up!)");
++    }, { .fill = 0xff999999, .h_justify = Style::Left }));
++    return grid;
+ }
+ 
+-// (g_craft_rarity_map + register/lookup helpers are defined at top of file
+-// so they have external linkage and the extern decls inside the lambdas
+-// link correctly.)
++Element *make_last_result_text() {
++    return new Ui::DynamicText(12, []() {
++        double age = Game::timestamp - Game::last_craft_timestamp;
++        if (age > 5.0 || Game::last_craft_timestamp < 0) return std::string("");
++        if (Game::last_craft_success) {
++            return std::format("Crafted: {}", PETAL_DATA[Game::last_craft_result].name);
++        } else if (Game::last_craft_destroyed > 0) {
++            return std::format("Failed. Destroyed {} of 5.", Game::last_craft_destroyed);
++        }
++        return std::string("");
++    }, { .fill = 0xffffe066, .h_justify = Style::Left });
++}
+ 
+-Element *Ui::make_craft_panel() {
+-    std::vector<Element *> rows;
+-    rows.push_back(new Ui::StaticText(22, "Craft"));
+-    rows.push_back(new Ui::StaticText(12,
+-        "Combine 5 same-rarity petals into 1 random next-rarity petal.",
+-        { .fill = 0xffcccccc, .h_justify = Style::Left }));
+-    rows.push_back(new Ui::StaticText(12,
+-        "Failure destroys 1-4 of the 5 consumed.",
+-        { .fill = 0xffcccccc, .h_justify = Style::Left }));
+-    rows.push_back(new Ui::Element(0, 8));
+-    for (uint8_t r = 0; r < RarityID::kNumRarities; ++r) {
+-        rows.push_back(make_rarity_craft_row(r));
+-    }
+-    rows.push_back(new Ui::Element(0, 8));
+-    rows.push_back(make_last_result_text());
++} // namespace
+ 
+-    Element *elt = new Ui::VContainer(rows, 15, 8, {
++Element *Ui::make_craft_panel() {
++    Element *elt = new Ui::VContainer({
++        new Ui::StaticText(22, "Craft"),
++        new Ui::StaticText(11,
++            "Pick a rarity, click 5 petals -> roll for an upgrade.",
++            { .fill = 0xffcccccc, .h_justify = Style::Left }),
++        new Ui::StaticText(11,
++            "Fail destroys 1-4 of the 5; the rest refund.",
++            { .fill = 0xffcccccc, .h_justify = Style::Left }),
++        new Ui::Element(0, 6),
++        make_slot_row(),
++        make_craft_action_row(),
++        new Ui::Element(0, 8),
++        new Ui::StaticText(12, "Rarity:", { .fill = 0xffeeeeee, .h_justify = Style::Left }),
++        make_tab_row(),
++        new Ui::Element(0, 6),
++        make_petal_grid(),
++        new Ui::Element(0, 6),
++        make_last_result_text()
++    }, 14, 6, {
+         .fill = 0xff3a8a3a,
+         .line_width = 6,
+         .round_radius = 4,
+         .animate = [](Element *e, Renderer &ctx) {
+             ctx.translate(0, (1 - e->animation) * 2 * e->height);
+         },
++        // Patch 0010: dropped `&& Game::should_render_title_ui()` so the
++        // panel stays usable after the player enters the game. The element
++        // now lives in other_ui_window (always rendered).
+         .should_render = []() {
+-            return Ui::panel_open == Panel::kCraft && Game::should_render_title_ui();
++            return Ui::panel_open == Panel::kCraft;
+         },
+         .h_justify = Style::Left,
+         .v_justify = Style::Bottom
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index 8af814f..6d5df30 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -1,6 +1,13 @@
+-// Phase 6 craft: Inventory panel — shows lifetime pickups per petal.
+-// One row per rarity, grid of petals within. Count shown under each tile
+-// using format_score() so 5_000 → "5k", 5_000_000 → "5m", etc.
++// Phase 6 (Patch 0010 rewrite): Inventory panel — lifetime petal counts.
++//
++// Layout: a 6-column grid sorted by (rarity ASC, petal_id ASC). Empty cells
++// (count == 0) hide via per-cell should_render. Format counts with
++// format_score (5_000 → "5k", 5e6 → "5m").
++//
++// Patch 0010 changes from v1:
++//   - True multi-col grid (was: row-per-rarity HContainer).
++//   - Drops `Game::should_render_title_ui()` gate — panel must stay open
++//     when the player enters the game. Lives in other_ui_window now.
+ 
+ #include <Client/Ui/TitleScreen/TitleScreen.hh>
+ 
+@@ -17,6 +24,9 @@
+ 
+ #include <Helpers/Math.hh>
+ 
++#include <algorithm>
++#include <vector>
++
+ using namespace Ui;
+ 
+ namespace {
+@@ -30,16 +40,13 @@ namespace {
+                 .stroke_hsv = 0.85,
+                 .line_width = 2,
+                 .round_radius = w / 16,
++                .should_render = [pid]() {
++                    return Game::persistent_inventory[pid] > 0;
++                },
+                 .v_justify = Style::Top
+-            }), id(pid) {
+-            style.should_render = [pid]() {
+-                return Game::persistent_inventory[pid] > 0;
+-            };
+-        }
++            }), id(pid) {}
+         virtual void on_render(Renderer &ctx) override {
+             Element::on_render(ctx);
+-            // Draw count text FIRST. TextArgs has no `.y` — translate then
+-            // draw, then translate back. Drift text to bottom of cell.
+             uint32_t n = Game::persistent_inventory[id];
+             float text_y = height / 2 - 8;
+             ctx.translate(0, text_y);
+@@ -48,9 +55,8 @@ namespace {
+                 .size = 10
+             });
+             ctx.translate(0, -text_y);
+-            // Then scale + translate + petal — done LAST so scale doesn't
+-            // bleed into text (no save/restore in this Renderer API; we
+-            // rely on Element render isolation between siblings).
++            // Petal sprite, drawn LAST. No save/restore in this Renderer —
++            // we lean on Element-level isolation between siblings.
+             ctx.translate(0, -7);
+             ctx.scale(width / 60);
+             draw_loadout_background(ctx, id);
+@@ -64,60 +70,71 @@ namespace {
+             }
+         }
+     };
++}
++
++Element *Ui::make_inventory_panel() {
++    // Sort: rarity ASC then PetalID ASC. Stable so same-rarity petals stay
++    // in PetalID order (mirrors gardn's PETAL_DATA enum layout).
++    std::vector<PetalID::T> ids;
++    for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
++        ids.push_back(id);
++    }
++    std::stable_sort(ids.begin(), ids.end(), [](PetalID::T a, PetalID::T b) {
++        if (PETAL_DATA[a].rarity != PETAL_DATA[b].rarity)
++            return PETAL_DATA[a].rarity < PETAL_DATA[b].rarity;
++        return a < b;
++    });
+ 
+-    Element *make_rarity_row(uint8_t rarity) {
+-        // Style field order: ... animate, should_render, h_justify, v_justify ...
+-        // (ISO C++ requires designators in declaration order.)
+-        Element *row = new Ui::HContainer({}, 0, 6, {
+-            .should_render = [rarity]() {
+-                for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
+-                    if (PETAL_DATA[id].rarity == rarity && Game::persistent_inventory[id] > 0)
+-                        return true;
++    constexpr uint8_t COLS = 6;
++    Element *grid = new Ui::VContainer({}, 0, 6, { .h_justify = Style::Left });
++    for (size_t i = 0; i < ids.size(); i += COLS) {
++        std::vector<Element *> row;
++        for (size_t j = i; j < i + COLS && j < ids.size(); ++j) {
++            row.push_back(new InventoryPetalCell(ids[j], 50));
++        }
++        // Row only shows if any cell within it would render (has owned petals).
++        // We capture the slice — fine because Element ptrs are stable.
++        std::vector<PetalID::T> row_ids(ids.begin() + i,
++            ids.begin() + std::min(i + COLS, ids.size()));
++        grid->add_child(new Ui::HContainer(row, 0, 6, {
++            .should_render = [row_ids]() {
++                for (PetalID::T id : row_ids) {
++                    if (Game::persistent_inventory[id] > 0) return true;
+                 }
+                 return false;
+             },
+             .h_justify = Style::Left
+-        });
+-        // rarity label (e.g. "Common")
+-        row->add_child(new Ui::StaticText(13, RARITY_NAMES[rarity], {
+-            .fill = RARITY_COLORS[rarity],
+-            .h_justify = Style::Left
+         }));
+-        for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
+-            if (PETAL_DATA[id].rarity == rarity) {
+-                row->add_child(new InventoryPetalCell(id, 50));
+-            }
+-        }
+-        return row;
+     }
+-}
+ 
+-Element *Ui::make_inventory_panel() {
+-    Element *content = new Ui::VContainer({}, 0, 8, { .h_justify = Style::Left });
+-    for (uint8_t r = 0; r < RarityID::kNumRarities; ++r) {
+-        content->add_child(make_rarity_row(r));
+-    }
+-    // Empty-state hint
+-    content->add_child(new Ui::DynamicText(12, []() {
+-        uint32_t total = 0;
+-        for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id)
+-            total += Game::persistent_inventory[id];
+-        if (total == 0) return std::string("Pick up petals from defeated mobs to fill your inventory.");
+-        return std::string("Total petals owned: ") + format_score((float)total);
+-    }, { .fill = 0xffcccccc, .h_justify = Style::Left }));
++    Element *content = new Ui::VContainer({
++        new Ui::StaticText(11,
++            "Lifetime pickups. Hover for petal details. Use Craft to upgrade.",
++            { .fill = 0xffcccccc, .h_justify = Style::Left }),
++        grid,
++        new Ui::DynamicText(12, []() {
++            uint32_t total = 0;
++            for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id)
++                total += Game::persistent_inventory[id];
++            if (total == 0)
++                return std::string("Pick up petals from defeated mobs to fill your inventory.");
++            return std::string("Total petals owned: ") + format_score((float)total);
++        }, { .fill = 0xffcccccc, .h_justify = Style::Left })
++    }, 0, 8, { .h_justify = Style::Left });
+ 
+     Element *elt = new Ui::VContainer({
+         new Ui::StaticText(22, "Inventory"),
+-        new Ui::ScrollContainer(content, 350)
+-    }, 15, 10, {
++        new Ui::ScrollContainer(content, 380)
++    }, 14, 8, {
+         .fill = 0xff7c5cb0,  // Omega-ish purple — matches hornex rarity-bg-8
+         .line_width = 6,
+         .round_radius = 4,
+         .animate = [](Element *e, Renderer &ctx) {
+             ctx.translate(0, (1 - e->animation) * 2 * e->height);
+         },
++        // Patch 0010: dropped title-screen gate so panel stays open after Play.
+         .should_render = []() {
+-            return Ui::panel_open == Panel::kInventory && Game::should_render_title_ui();
++            return Ui::panel_open == Panel::kInventory;
+         },
+         .h_justify = Style::Left,
+         .v_justify = Style::Bottom
+diff --git a/Client/Ui/TitleScreen/MainScreen.cc b/Client/Ui/TitleScreen/MainScreen.cc
+index b45a227..86a97f7 100644
+--- a/Client/Ui/TitleScreen/MainScreen.cc
++++ b/Client/Ui/TitleScreen/MainScreen.cc
+@@ -177,39 +177,10 @@ Element *Ui::make_panel_buttons() {
+             [](){ return Ui::panel_open == Panel::kChangelog; },
+             { .fill = 0xff5a9fdb, .line_width = 5, .round_radius = 3 }
+         ),
+-        // Phase 6 craft: Inventory + Craft buttons
+-        new Ui::Button(100, 35,
+-            new Ui::StaticText(16, "Inventory"),
+-            [](Element *elt, uint8_t e){ if (e == Ui::kClick) {
+-                if (Ui::panel_open != Panel::kInventory) {
+-                    Ui::panel_open = Panel::kInventory;
+-                    Element *pg = Ui::Panel::inventory;
+-                    if (pg != nullptr) {
+-                        pg->x = elt->screen_x / Ui::scale - pg->width / 2;
+-                        pg->y = -(elt->height + 20);
+-                        if (pg->x < 10) pg->x = 10;
+-                    }
+-                } else Ui::panel_open = Panel::kNone;
+-            } },
+-            [](){ return Ui::panel_open == Panel::kInventory; },
+-            { .fill = 0xff7c5cb0, .line_width = 5, .round_radius = 3 }
+-        ),
+-        new Ui::Button(80, 35,
+-            new Ui::StaticText(16, "Craft"),
+-            [](Element *elt, uint8_t e){ if (e == Ui::kClick) {
+-                if (Ui::panel_open != Panel::kCraft) {
+-                    Ui::panel_open = Panel::kCraft;
+-                    Element *pg = Ui::Panel::craft;
+-                    if (pg != nullptr) {
+-                        pg->x = elt->screen_x / Ui::scale - pg->width / 2;
+-                        pg->y = -(elt->height + 20);
+-                        if (pg->x < 10) pg->x = 10;
+-                    }
+-                } else Ui::panel_open = Panel::kNone;
+-            } },
+-            [](){ return Ui::panel_open == Panel::kCraft; },
+-            { .fill = 0xff3a8a3a, .line_width = 5, .round_radius = 3 }
+-        ),
++        // Patch 0010 moved Inventory + Craft buttons OUT of this title-only
++        // panel-buttons row and into a persistent left sidebar
++        // (Client/Ui/TitleScreen/MetaSidebar.cc, registered in
++        // other_ui_window). Visible on title screen AND during gameplay.
+    }, 10, 10, { .should_render = [](){ return Game::should_render_title_ui(); }, .h_justify = Style::Left, .v_justify = Style::Bottom });
+    return elt;
+ }
+diff --git a/Client/Ui/TitleScreen/MetaSidebar.cc b/Client/Ui/TitleScreen/MetaSidebar.cc
+new file mode 100644
+index 0000000..4603bd3
+--- /dev/null
++++ b/Client/Ui/TitleScreen/MetaSidebar.cc
+@@ -0,0 +1,123 @@
++// Patch 0010: persistent left-side icon sidebar for meta-game panels.
++//
++// Why a separate file: Inventory/Craft panels are "meta" — they're player
++// state that persists across game sessions, not tied to a single match. So
++// the entry points need to be visible everywhere (title + in game). gardn's
++// existing panel buttons (Settings/Petals/Mobs/Changelog) live in
++// `make_panel_buttons` inside title_ui_window and disappear when the player
++// enters the game. We can't reuse that pattern — we need other_ui_window
++// (the always-rendered layer) and our own little container.
++//
++// Visual: vertical strip on the LEFT edge, mid-height. Hornex's sandbox UI
++// puts similar icons in the same position (see docs/hornex-reference/
++// assets/screens/01-menu-main.png).
++//
++// Each button toggles `Ui::panel_open`. The panels themselves
++// (Inventory.cc / Craft.cc) read panel_open in their should_render.
++
++#include <Client/Ui/TitleScreen/TitleScreen.hh>
++
++#include <Client/Ui/Button.hh>
++#include <Client/Ui/Container.hh>
++#include <Client/Ui/StaticIcon.hh>
++#include <Client/Ui/StaticText.hh>
++#include <Client/Ui/Extern.hh>
++
++#include <Client/Assets/Assets.hh>
++#include <Client/Game.hh>
++
++#include <cmath>
++
++using namespace Ui;
++
++namespace {
++
++// Bag icon — for Inventory. Simple rounded rectangle + handle.
++void draw_bag_icon(Element *elt, Renderer &ctx) {
++    ctx.scale(elt->width / 32);
++    ctx.set_fill(0xffffffff);
++    ctx.set_stroke(0xff222222);
++    ctx.set_line_width(2);
++    // handle (semicircle)
++    ctx.begin_path();
++    ctx.partial_arc(0, -6, 6, M_PI, 0, 0);
++    ctx.stroke();
++    // body
++    ctx.begin_path();
++    ctx.round_rect(-9, -4, 18, 14, 3);
++    ctx.fill();
++    ctx.stroke();
++}
++
++// Anvil icon — for Craft. Trapezoidal anvil silhouette.
++void draw_anvil_icon(Element *elt, Renderer &ctx) {
++    ctx.scale(elt->width / 32);
++    ctx.set_fill(0xffffffff);
++    ctx.set_stroke(0xff222222);
++    ctx.set_line_width(2);
++    ctx.round_line_join();
++    // anvil shape: wide top, narrow waist, base
++    ctx.begin_path();
++    ctx.move_to(-10, -6);
++    ctx.line_to(10, -6);
++    ctx.line_to(10, -2);
++    ctx.line_to(4, -2);
++    ctx.line_to(4, 4);
++    ctx.line_to(8, 4);
++    ctx.line_to(8, 8);
++    ctx.line_to(-8, 8);
++    ctx.line_to(-8, 4);
++    ctx.line_to(-4, 4);
++    ctx.line_to(-4, -2);
++    ctx.line_to(-10, -2);
++    ctx.close_path();
++    ctx.fill();
++    ctx.stroke();
++}
++
++void on_inventory_click(Element *, uint8_t event) {
++    if (event != Ui::kClick) return;
++    Ui::panel_open = (Ui::panel_open == Panel::kInventory) ? Panel::kNone : Panel::kInventory;
++}
++void on_craft_click(Element *, uint8_t event) {
++    if (event != Ui::kClick) return;
++    Ui::panel_open = (Ui::panel_open == Panel::kCraft) ? Panel::kNone : Panel::kCraft;
++}
++
++bool inv_active() { return Ui::panel_open == Panel::kInventory; }
++bool craft_active() { return Ui::panel_open == Panel::kCraft; }
++
++} // namespace
++
++Element *Ui::make_meta_sidebar() {
++    constexpr float W = 44.0f;
++
++    Ui::Button *inv_btn = new Ui::Button(W, W,
++        new Ui::StaticIcon(draw_bag_icon, 32, 32),
++        on_inventory_click,
++        inv_active,
++        { .fill = 0xff7c5cb0, .stroke_hsv = 0.7, .line_width = 3, .round_radius = 5 });
++
++    Ui::Button *craft_btn = new Ui::Button(W, W,
++        new Ui::StaticIcon(draw_anvil_icon, 32, 32),
++        on_craft_click,
++        craft_active,
++        { .fill = 0xff3a8a3a, .stroke_hsv = 0.7, .line_width = 3, .round_radius = 5 });
++
++    Element *sidebar = new Ui::VContainer({
++        inv_btn,
++        craft_btn
++    }, 8, 8, {
++        .fill = 0x66000000,
++        .stroke_hsv = 0.0,
++        .line_width = 0,
++        .round_radius = 6,
++        // Always rendered — that's the whole point.
++        .should_render = []() { return true; },
++        .h_justify = Style::Left,
++        .v_justify = Style::Middle
++    });
++    // Pin to the left edge
++    sidebar->x = 12;
++    return sidebar;
++}
+diff --git a/Client/Ui/TitleScreen/TitleScreen.hh b/Client/Ui/TitleScreen/TitleScreen.hh
+index 21b4878..62b1b5f 100644
+--- a/Client/Ui/TitleScreen/TitleScreen.hh
++++ b/Client/Ui/TitleScreen/TitleScreen.hh
+@@ -71,4 +71,7 @@ namespace Ui {
+     // Phase 6 craft
+     Element *make_inventory_panel();
+     Element *make_craft_panel();
++    // Patch 0010: persistent sidebar with Inventory/Craft buttons. Lives in
++    // other_ui_window so it stays visible during gameplay.
++    Element *make_meta_sidebar();
+ }
+\ No newline at end of file

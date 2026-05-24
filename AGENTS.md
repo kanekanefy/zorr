@@ -30,7 +30,7 @@ for p in ../../patches/0001*.patch ../../patches/0002*.patch \
          ../../patches/0003*.patch ../../patches/0004*.patch \
          ../../patches/0005*.patch ../../patches/0006*.patch \
          ../../patches/0007*.patch ../../patches/0008*.patch \
-         ../../patches/0009*.patch; do
+         ../../patches/0009*.patch ../../patches/0010*.patch; do
   patch -p1 --silent < "$p" >/dev/null 2>&1
 done
 
