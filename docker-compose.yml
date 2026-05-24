@@ -1,0 +1,9 @@
+services:
+  zorr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: zorr:local
+    ports:
+      - "9001:9001"
+    restart: unless-stopped

@@ -1,0 +1,12 @@
+.git
+.github
+build
+docs
+dokploy
+cloudflare
+*.md
+.DS_Store
+.vscode
+.idea
+.claude
+deploy/.secrets
