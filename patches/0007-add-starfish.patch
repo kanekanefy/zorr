@@ -1,0 +1,87 @@
+diff --git a/Client/Assets/Mob.cc b/Client/Assets/Mob.cc
+index a8c2a31..1786fd5 100644
+--- a/Client/Assets/Mob.cc
++++ b/Client/Assets/Mob.cc
+@@ -677,6 +677,32 @@ void draw_static_mob(MobID::T mob_id, Renderer &ctx, MobRenderAttributes attr) {
+             draw_static_flower(ctx, attr.flower_attrs);
+             break;
+         };
++        case MobID::kStarfish: {
++            SET_BASE_COLOR(0xffe86e82)
++            float breath = 1.0f + 0.05f * animation_value;
++            float r_outer = radius * breath;
++            float r_inner = radius * 0.45f * breath;
++            ctx.set_fill(base_color);
++            ctx.set_stroke(Renderer::HSV(base_color, 0.8));
++            ctx.set_line_width(5);
++            ctx.round_line_cap();
++            ctx.round_line_join();
++            ctx.begin_path();
++            for (uint32_t i = 0; i < 10; ++i) {
++                float angle = M_PI * 2 * i / 10 - M_PI / 2;
++                float r = (i % 2 == 0) ? r_outer : r_inner;
++                if (i == 0) ctx.move_to(r * cosf(angle), r * sinf(angle));
++                else ctx.line_to(r * cosf(angle), r * sinf(angle));
++            }
++            ctx.line_to(r_outer * cosf(-M_PI / 2), r_outer * sinf(-M_PI / 2));
++            ctx.fill();
++            ctx.stroke();
++            ctx.set_fill(Renderer::HSV(base_color, 1.3));
++            ctx.begin_path();
++            ctx.arc(0, 0, radius * 0.25f);
++            ctx.fill();
++            break;
++        }
+         default:
+             assert(!"Didn't cover mob render");
+             break;
+diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
+index 4e2d3d3..f0f3c7f 100644
+--- a/Shared/StaticData.cc
++++ b/Shared/StaticData.cc
+@@ -1060,6 +1060,21 @@ std::array<struct MobData, MobID::kNumMobs> const MOB_DATA = {{
+         },
+         .attributes = {}
+     },
++    {
++        .name = "Starfish",
++        .description = "Washed up far from the sea. It still has some bite though.",
++        .rarity = RarityID::kUnusual,
++        .health = {40.0, 60.0},
++        .damage = 15.0,
++        .radius = {25.0, 35.0},
++        .xp = 8,
++        .drops = {
++            PetalID::kFaster, PetalID::kSalt, PetalID::kRose, PetalID::kYucca
++        },
++        .attributes = {
++            .stationary = 1
++        }
++    },
+ }};
+ 
+ std::array<StaticArray<float, MAX_DROPS_PER_MOB>, MobID::kNumMobs> const MOB_DROP_CHANCES = [](){
+diff --git a/Shared/StaticData.hh b/Shared/StaticData.hh
+index dcdd521..d36d99e 100644
+--- a/Shared/StaticData.hh
++++ b/Shared/StaticData.hh
+@@ -40,6 +40,7 @@ inline std::array const MAP_DATA = std::to_array<struct ZoneDefinition>({
+             { MobID::kCentipede, 10000 },
+             { MobID::kBoulder, 10000 },
+             { MobID::kMassiveLadybug, 200 },
++            { MobID::kStarfish, 50000 },
+             { MobID::kSquare, 1 }
+         },
+         .difficulty = 0,
+diff --git a/Shared/StaticDefinitions.hh b/Shared/StaticDefinitions.hh
+index 9231095..4f976f2 100644
+--- a/Shared/StaticDefinitions.hh
++++ b/Shared/StaticDefinitions.hh
+@@ -107,6 +107,7 @@ namespace MobID {
+         kShinyLadybug,
+         kSquare,
+         kDigger,
++        kStarfish,
+         kNumMobs
+     };
+ };
