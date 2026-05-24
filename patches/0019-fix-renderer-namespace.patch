@@ -1,0 +1,19 @@
+diff --git a/Client/Ui/TitleScreen/MetaSidebar.cc b/Client/Ui/TitleScreen/MetaSidebar.cc
+index 0193c79..a3e5780 100644
+--- a/Client/Ui/TitleScreen/MetaSidebar.cc
++++ b/Client/Ui/TitleScreen/MetaSidebar.cc
+@@ -131,12 +131,12 @@ public:
+         .layer = 2  // above panel contents, above loadout
+     }) {
+         // Per-frame: snap to mouse position (in window-centered coords).
+-        style.animate = [](Ui::Element *e, Ui::Renderer &) {
++        style.animate = [](Ui::Element *e, Renderer &) {
+             e->x = (Input::mouse_x - Ui::window_width / 2) / Ui::scale;
+             e->y = (Input::mouse_y - Ui::window_height / 2) / Ui::scale;
+         };
+     }
+-    virtual void on_render(Ui::Renderer &ctx) override {
++    virtual void on_render(Renderer &ctx) override {
+         PetalID::T id = Game::inventory_drag_id;
+         if (id == PetalID::kNone || id >= PetalID::kNumPetals) return;
+         ctx.set_global_alpha(0.85f);
