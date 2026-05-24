@@ -22,3 +22,11 @@ node_modules/
 
 # deploy script secrets
 deploy/.secrets
+
+# local research notebook — contains 1MB wasm + 392KB sprite atlas from
+# another project (sandbox.hornex.pro). See its README.md for legal notes.
+# Keep on disk only — not for git history.
+docs/hornex-reference/
+
+# scratch file (a previous suggestion-list, not for committing)
+.gitignore.add

@@ -1,0 +1,220 @@
+diff --git a/Client/Assets/Mob.cc b/Client/Assets/Mob.cc
+index 1786fd5..c9bc7da 100644
+--- a/Client/Assets/Mob.cc
++++ b/Client/Assets/Mob.cc
+@@ -703,6 +703,107 @@ void draw_static_mob(MobID::T mob_id, Renderer &ctx, MobRenderAttributes attr) {
+             ctx.fill();
+             break;
+         }
++        case MobID::kJellyfish: {
++            // Cyan bell + 4 wavy tentacles. animation_value drives a slow
++            // pulse — bell breathes 1.0 → 1.08, tentacles wag opposite phase.
++            SET_BASE_COLOR(0xff5fd4f0)
++            float breath = 1.0f + 0.08f * animation_value;
++            float r_bell = radius * 0.85f * breath;
++            ctx.set_stroke(Renderer::HSV(base_color, 0.7));
++            ctx.set_line_width(4);
++            ctx.round_line_cap();
++            ctx.round_line_join();
++            // tentacles first (behind bell)
++            float wag = 0.4f * sinf(animation_value * M_PI);
++            for (uint32_t i = 0; i < 4; ++i) {
++                float tx0 = (i - 1.5f) * radius * 0.35f;
++                ctx.begin_path();
++                ctx.move_to(tx0, r_bell * 0.4f);
++                ctx.bcurve_to(
++                    tx0 + wag * radius * 0.3f, r_bell * 0.8f,
++                    tx0 - wag * radius * 0.3f, r_bell * 1.2f,
++                    tx0 + wag * radius * 0.2f, radius * 1.4f
++                );
++                ctx.stroke();
++            }
++            // bell dome — partial_arc with 6th arg (anticlockwise) = 0
++            ctx.set_fill(base_color);
++            ctx.begin_path();
++            ctx.partial_arc(0, 0, r_bell, M_PI, M_PI * 2, 0);
++            ctx.line_to(r_bell, r_bell * 0.2f);
++            ctx.line_to(-r_bell, r_bell * 0.2f);
++            ctx.close_path();
++            ctx.fill();
++            ctx.stroke();
++            // inner highlight
++            ctx.set_fill(Renderer::HSV(base_color, 1.4));
++            ctx.begin_path();
++            ctx.arc(0, -r_bell * 0.3f, r_bell * 0.25f);
++            ctx.fill();
++            break;
++        }
++        case MobID::kMushroom: {
++            // Classic Mario red-cap. Cap dome on top, off-white stem below,
++            // 3 white dots on the cap. No animation — mushrooms don't move.
++            SET_BASE_COLOR(0xffc94e44)
++            // stem
++            ctx.set_fill(0xfff0e6cc);
++            ctx.set_stroke(Renderer::HSV(0xfff0e6cc, 0.7));
++            ctx.set_line_width(4);
++            ctx.round_line_join();
++            ctx.begin_path();
++            ctx.move_to(-radius * 0.45f, 0);
++            ctx.line_to(radius * 0.45f, 0);
++            ctx.line_to(radius * 0.55f, radius * 0.75f);
++            ctx.line_to(-radius * 0.55f, radius * 0.75f);
++            ctx.close_path();
++            ctx.fill();
++            ctx.stroke();
++            // cap (half-disc)
++            ctx.set_fill(base_color);
++            ctx.set_stroke(Renderer::HSV(base_color, 0.7));
++            ctx.begin_path();
++            ctx.partial_arc(0, 0, radius, M_PI, M_PI * 2, 0);
++            ctx.close_path();
++            ctx.fill();
++            ctx.stroke();
++            // 3 white spots
++            ctx.set_fill(0xffffffff);
++            for (uint32_t i = 0; i < 3; ++i) {
++                float a = M_PI + (i + 1) * M_PI / 4;
++                float r = radius * 0.55f;
++                float dot_r = radius * (i == 1 ? 0.18f : 0.13f);
++                ctx.begin_path();
++                ctx.arc(r * cosf(a), r * sinf(a), dot_r);
++                ctx.fill();
++            }
++            break;
++        }
++        case MobID::kBubbleMob: {
++            // Translucent blue bubble + crescent highlight on top-left.
++            // breath makes it pulse — feels alive but harmless.
++            SET_BASE_COLOR(0xff7fbfff)
++            float breath = 1.0f + 0.06f * animation_value;
++            float r = radius * breath;
++            ctx.set_fill(base_color);
++            ctx.set_stroke(Renderer::HSV(base_color, 0.6));
++            ctx.set_line_width(4);
++            ctx.begin_path();
++            ctx.arc(0, 0, r);
++            ctx.fill();
++            ctx.stroke();
++            // inner translucent ring
++            ctx.set_fill(0x55ffffff);
++            ctx.begin_path();
++            ctx.arc(0, 0, r * 0.72f);
++            ctx.fill();
++            // top-left crescent highlight
++            ctx.set_fill(0xffffffff);
++            ctx.begin_path();
++            ctx.arc(-r * 0.35f, -r * 0.35f, r * 0.18f);
++            ctx.fill();
++            break;
++        }
+         default:
+             assert(!"Didn't cover mob render");
+             break;
+diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
+index 788f44b..72307c3 100644
+--- a/Shared/StaticData.cc
++++ b/Shared/StaticData.cc
+@@ -1076,6 +1076,64 @@ std::array<struct MobData, MobID::kNumMobs> const MOB_DATA = {{
+             .stationary = 1
+         }
+     },
++    {
++        // Phase 6: ocean biome — shocky boy. gardn has no chain-lightning,
++        // so we lean on high-contact-damage + cyan visuals to communicate
++        // "electric" semantically.
++        .name = "Jellyfish",
++        .description = "Floats. Stings. Drops electric-themed petals.",
++        .rarity = RarityID::kRare,
++        .health = {80.0, 140.0},
++        .damage = 25.0,
++        .radius = {28.0, 40.0},
++        .xp = 20,
++        .drops = {
++            PetalID::kFaster, PetalID::kStinger, PetalID::kSalt, PetalID::kBubble, PetalID::kLight
++        },
++        .attributes = {
++            .stationary = 1
++        }
++    },
++    {
++        // Phase 6: poison validator — gardn's poison_damage on MobAttributes
++        // already works, just nobody used it on a mob yet (only on petals).
++        // 6 ticks/sec × 4s gives a slow-cook DoT, classic 'mushroom' feel.
++        .name = "Mushroom",
++        .description = "Comes with side effects. Don't lick it.",
++        .rarity = RarityID::kCommon,
++        .health = {30.0, 55.0},
++        .damage = 8.0,
++        .radius = {22.0, 32.0},
++        .xp = 6,
++        .drops = {
++            PetalID::kRose, PetalID::kLeaf, PetalID::kIris, PetalID::kAzalea
++        },
++        .attributes = {
++            .stationary = 1,
++            .poison_damage = {
++                .damage = 6.0,
++                .time = 4.0
++            }
++        }
++    },
++    {
++        // Phase 6: glass cannon target. 1-HP mostly — exists so newbies have
++        // something they can guarantee-kill. Drops a fat stack of Bubble petals
++        // to seed the inventory for the crafting loop arriving in patch 0009.
++        .name = "Bubble",
++        .description = "Pop me, free petals. Pop me hard, free MORE petals.",
++        .rarity = RarityID::kCommon,
++        .health = {1.0, 8.0},
++        .damage = 1.0,
++        .radius = {18.0, 32.0},
++        .xp = 2,
++        .drops = {
++            PetalID::kBubble, PetalID::kBubble, PetalID::kBubble, PetalID::kLight, PetalID::kBasic
++        },
++        .attributes = {
++            .stationary = 1
++        }
++    },
+ }};
+ 
+ std::array<StaticArray<float, MAX_DROPS_PER_MOB>, MobID::kNumMobs> const MOB_DROP_CHANCES = [](){
+diff --git a/Shared/StaticData.hh b/Shared/StaticData.hh
+index d36d99e..54bcedb 100644
+--- a/Shared/StaticData.hh
++++ b/Shared/StaticData.hh
+@@ -41,6 +41,10 @@ inline std::array const MAP_DATA = std::to_array<struct ZoneDefinition>({
+             { MobID::kBoulder, 10000 },
+             { MobID::kMassiveLadybug, 200 },
+             { MobID::kStarfish, 50000 },
++            // Phase 6 additions — Bubble is easy XP/drops, Mushroom is the
++            // poison teacher. Weights chosen so they're common but not flooding.
++            { MobID::kBubbleMob, 80000 },
++            { MobID::kMushroom, 30000 },
+             { MobID::kSquare, 1 }
+         },
+         .difficulty = 0,
+@@ -88,6 +92,9 @@ inline std::array const MAP_DATA = std::to_array<struct ZoneDefinition>({
+             { MobID::kEvilCentipede, 10000 },
+             { MobID::kMassiveBeetle, 2000 },
+             { MobID::kAntHole, 2000 },
++            // Phase 6 — Jellyfish lives in Hard zone (Rare, high damage).
++            // Rare weight so it's a "ooh shiny" sighting, not background noise.
++            { MobID::kJellyfish, 8000 },
+             { MobID::kSquare, 1 }
+         },
+         .difficulty = 2,
+diff --git a/Shared/StaticDefinitions.hh b/Shared/StaticDefinitions.hh
+index 4f976f2..817e7bb 100644
+--- a/Shared/StaticDefinitions.hh
++++ b/Shared/StaticDefinitions.hh
+@@ -108,6 +108,9 @@ namespace MobID {
+         kSquare,
+         kDigger,
+         kStarfish,
++        kJellyfish,
++        kMushroom,
++        kBubbleMob, // mob; distinct from PetalID::kBubble
+         kNumMobs
+     };
+ };
