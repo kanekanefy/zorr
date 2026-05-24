@@ -1,0 +1,139 @@
+diff --git a/Client/Game.cc b/Client/Game.cc
+index 7c9af5d..a9a91fc 100644
+--- a/Client/Game.cc
++++ b/Client/Game.cc
+@@ -122,6 +122,10 @@ void Game::init() {
+     game_ui_window.add_child(Ui::make_meta_sidebar());
+     game_ui_window.add_child(Ui::make_inventory_panel());
+     game_ui_window.add_child(Ui::make_craft_panel());
++    // Patch 0017: drag-from-inventory ghost. Only matters in-game (you can't
++    // drag onto loadout slots on the title screen), so single instance on
++    // game_ui_window. should_render gates it on Game::inventory_drag_id.
++    game_ui_window.add_child(Ui::make_inventory_drag_ghost());
+     title_ui_window.add_child(
+         Ui::make_github_link_button()
+     );
+diff --git a/Client/Ui/TitleScreen/Craft.cc b/Client/Ui/TitleScreen/Craft.cc
+index 54b21af..a178f14 100644
+--- a/Client/Ui/TitleScreen/Craft.cc
++++ b/Client/Ui/TitleScreen/Craft.cc
+@@ -308,8 +308,13 @@ Element *make_failure_banner() {
+ } // namespace
+ 
+ Element *Ui::make_craft_panel() {
+-    Element *elt = new Ui::VContainer({
++    // Patch 0017: title row with close X on the right.
++    Element *header = new Ui::HFlexContainer(
+         new Ui::StaticText(22, "Craft"),
++        Ui::make_panel_close_button(),
++        0, 0, { .h_justify = Style::Left });
++    Element *elt = new Ui::VContainer({
++        header,
+         // Patch 0012: result banners moved here, right under the title,
+         // so the player can't miss them. Both render when active; they're
+         // mutually exclusive via their should_render checks.
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index 0f0570b..d80698b 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -132,8 +132,15 @@ Element *Ui::make_inventory_panel() {
+         }, { .fill = 0xffcccccc, .h_justify = Style::Left })
+     }, 0, 8, { .h_justify = Style::Left });
+ 
+-    Element *elt = new Ui::VContainer({
++    // Patch 0017: title row uses HFlexContainer so the close X sits hard-right
++    // while "Inventory" stays left. HFlexContainer auto-stretches to parent
++    // width on render.
++    Element *header = new Ui::HFlexContainer(
+         new Ui::StaticText(22, "Inventory"),
++        Ui::make_panel_close_button(),
++        0, 0, { .h_justify = Style::Left });
++    Element *elt = new Ui::VContainer({
++        header,
+         new Ui::ScrollContainer(content, 380)
+     }, 14, 8, {
+         .fill = 0xff7c5cb0,  // Omega-ish purple — matches hornex rarity-bg-8
+diff --git a/Client/Ui/TitleScreen/MetaSidebar.cc b/Client/Ui/TitleScreen/MetaSidebar.cc
+index 03868b3..0193c79 100644
+--- a/Client/Ui/TitleScreen/MetaSidebar.cc
++++ b/Client/Ui/TitleScreen/MetaSidebar.cc
+@@ -24,9 +24,11 @@
+ // (caught the hard way on the first build).
+ #include <Client/Ui/StaticText.hh>
+ #include <Client/Ui/Extern.hh>
++#include <Client/Ui/InGame/Loadout.hh>  // Patch 0017: draw_loadout_background
+ 
+ #include <Client/Assets/Assets.hh>
+ #include <Client/Game.hh>
++#include <Client/Input.hh>  // Patch 0017: Input::mouse_x for drag ghost
+ 
+ #include <cmath>
+ 
+@@ -102,6 +104,52 @@ bool craft_active() { return Ui::panel_open == Panel::kCraft; }
+ 
+ } // namespace
+ 
++// Patch 0017: shared close button — used by both Inventory and Craft panels.
++// They each include `make_panel_close_button()` in the header HFlexContainer
++// so the panel can be dismissed without clicking the sidebar icon again.
++void Ui::on_panel_close(Element *, uint8_t event) {
++    if (event != Ui::kClick) return;
++    Ui::panel_open = Panel::kNone;
++}
++
++Element *Ui::make_panel_close_button() {
++    return new Ui::Button(24, 24,
++        new Ui::StaticText(14, "x", { .fill = 0xffffffff }),
++        Ui::on_panel_close, nullptr,
++        { .fill = 0xff8a3a3a, .stroke_hsv = 0.6, .line_width = 2, .round_radius = 3 });
++}
++
++// Patch 0017: drag-from-inventory ghost. While `Game::inventory_drag_id` is
++// set (between mousedown on an inventory cell and release somewhere), render
++// a small petal sprite that follows the cursor. Discoverability — without
++// it the drag is invisible and users wouldn't know it was happening.
++namespace {
++class InventoryDragGhost final : public Ui::Element {
++public:
++    InventoryDragGhost() : Element(36, 36, {
++        .should_render = []() { return Game::inventory_drag_id != PetalID::kNone; },
++        .layer = 2  // above panel contents, above loadout
++    }) {
++        // Per-frame: snap to mouse position (in window-centered coords).
++        style.animate = [](Ui::Element *e, Ui::Renderer &) {
++            e->x = (Input::mouse_x - Ui::window_width / 2) / Ui::scale;
++            e->y = (Input::mouse_y - Ui::window_height / 2) / Ui::scale;
++        };
++    }
++    virtual void on_render(Ui::Renderer &ctx) override {
++        PetalID::T id = Game::inventory_drag_id;
++        if (id == PetalID::kNone || id >= PetalID::kNumPetals) return;
++        ctx.set_global_alpha(0.85f);
++        ctx.scale(width / 60);
++        draw_loadout_background(ctx, id);
++    }
++};
++}
++
++Element *Ui::make_inventory_drag_ghost() {
++    return new InventoryDragGhost();
++}
++
+ Element *Ui::make_meta_sidebar() {
+     constexpr float W = 44.0f;
+ 
+diff --git a/Client/Ui/TitleScreen/TitleScreen.hh b/Client/Ui/TitleScreen/TitleScreen.hh
+index 62b1b5f..33277bf 100644
+--- a/Client/Ui/TitleScreen/TitleScreen.hh
++++ b/Client/Ui/TitleScreen/TitleScreen.hh
+@@ -74,4 +74,9 @@ namespace Ui {
+     // Patch 0010: persistent sidebar with Inventory/Craft buttons. Lives in
+     // other_ui_window so it stays visible during gameplay.
+     Element *make_meta_sidebar();
++    // Patch 0017: panel polish — close X button shared by both panels,
++    // drag ghost following the cursor while inventory_drag_id is set.
++    Element *make_panel_close_button();
++    void on_panel_close(Element *, uint8_t);
++    Element *make_inventory_drag_ghost();
+ }
+\ No newline at end of file
