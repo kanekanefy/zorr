@@ -97,9 +97,9 @@ index 0000000..45beedb
 +    inline constexpr float PETAL_DMG_MULT = 20.0f;   // Petal-to-mob damage * this
 +    inline constexpr float MOB_DMG_MULT = 0.1f;      // Mob-to-flower damage * this
 +
-+    // Economy (掉爆 + 怪满屏)
-+    inline constexpr float DROP_MULT = 20.0f;        // Drop chance * this (capped at 1.0 by frand)
-+    inline constexpr float DENSITY_MULT = 5.0f;      // Mob density * this
++    // Economy (掉率高 + 怪密度合理 — 平衡爽快与客户端 FPS)
++    inline constexpr float DROP_MULT = 8.0f;         // Drop chance * this (capped at 1.0 by frand). Was 20 → 8 to reduce drop pile-up & client lag.
++    inline constexpr float DENSITY_MULT = 3.0f;      // Mob density * this. Was 5 → 3 to reduce entity count.
 +}
 diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
 index 4e2d3d3..c32d9d1 100644

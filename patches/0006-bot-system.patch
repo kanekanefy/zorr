@@ -1,0 +1,340 @@
+diff --git a/Server/Bot.cc b/Server/Bot.cc
+new file mode 100644
+index 0000000..a5a28aa
+--- /dev/null
++++ b/Server/Bot.cc
+@@ -0,0 +1,157 @@
++#include <Server/Bot.hh>
++
++#include <Server/PetalTracker.hh>
++#include <Server/Spawn.hh>
++
++#include <Shared/Entity.hh>
++#include <Shared/Map.hh>
++#include <Shared/Simulation.hh>
++#include <Shared/StaticData.hh>
++
++#include <Helpers/Math.hh>
++#include <Helpers/Vector.hh>
++
++#include <cmath>
++
++namespace BotConfig {
++    constexpr int   RESPAWN_COOLDOWN_TICKS = 5 * 20;   // 5s @ TPS=20
++    constexpr int   WANDER_CHANGE_TICKS    = 5 * 20;   // pick new wander target every 5s
++    constexpr float VISION_RADIUS          = 500.0f;
++    constexpr float FLEE_HEALTH_RATIO      = 0.30f;
++    constexpr float WANDER_RANGE           = 1500.0f;  // half-width of wander target offset
++    constexpr float WANDER_STOP_DIST       = 50.0f;    // close enough to wander target → stop
++}
++
++namespace BotNames {
++    static char const *const ROOKIE_NAMES[] = {
++        "noob123", "flwr_new", "petalpls", "rosie_xo", "imaweed",
++        "floofyy", "yo_im_new", "bee_lover", "petal99", "flower42",
++    };
++    static char const *const COMPETITOR_NAMES[] = {
++        "GardenFox", "BumbleByte", "stigmatize",
++        "PollenDrip", "LadyBugLuv", "SporeStorm",
++    };
++    static char const *const VETERAN_NAMES[] = {
++        "xX_Heaviest_Xx", "florr_pr0", "L1GHTNlNG",
++        "tha_real_pro", "Yggdr4sil_main",
++    };
++
++    std::string pick(BotTier tier, uint32_t index) {
++        switch (tier) {
++            case BotTier::Rookie:     return ROOKIE_NAMES[index % 10];
++            case BotTier::Competitor: return COMPETITOR_NAMES[index % 6];
++            case BotTier::Veteran:    return VETERAN_NAMES[index % 5];
++        }
++        return "bot";
++    }
++}
++
++namespace BotTiers {
++    static PetalID::T const ROOKIE_INVENTORY[8] = {
++        PetalID::kBasic, PetalID::kBasic, PetalID::kBasic, PetalID::kBasic,
++        PetalID::kBasic, PetalID::kBasic, PetalID::kBasic, PetalID::kBasic,
++    };
++    static PetalID::T const COMPETITOR_INVENTORY[8] = {
++        PetalID::kStinger, PetalID::kRose, PetalID::kFaster, PetalID::kHeavy,
++        PetalID::kBasic,   PetalID::kBasic, PetalID::kBasic, PetalID::kBasic,
++    };
++    static PetalID::T const VETERAN_INVENTORY[8] = {
++        PetalID::kHeaviest, PetalID::kStinger,  PetalID::kYggdrasil, PetalID::kRose,
++        PetalID::kFaster,   PetalID::kTricac,   PetalID::kTriplet,   PetalID::kPeas,
++    };
++
++    PetalID::T const *get_inventory(BotTier tier) {
++        switch (tier) {
++            case BotTier::Rookie:     return ROOKIE_INVENTORY;
++            case BotTier::Competitor: return COMPETITOR_INVENTORY;
++            case BotTier::Veteran:    return VETERAN_INVENTORY;
++        }
++        return ROOKIE_INVENTORY;
++    }
++
++    uint32_t get_random_level(BotTier tier) {
++        switch (tier) {
++            case BotTier::Rookie:     return 1  + (uint32_t)(frand() * 10);  // 1..10
++            case BotTier::Competitor: return 30 + (uint32_t)(frand() * 20);  // 30..49
++            case BotTier::Veteran:    return 70 + (uint32_t)(frand() * 30);  // 70..99
++        }
++        return 1;
++    }
++}
++
++static float distance_between(Entity const &a, Entity const &b) {
++    float dx = a.get_x() - b.get_x();
++    float dy = a.get_y() - b.get_y();
++    return std::sqrt(dx * dx + dy * dy);
++}
++
++void Bot::tick(Simulation *sim) {
++    if (!sim->ent_exists(camera_id)) return;
++    Entity &camera = sim->get_ent(camera_id);
++
++    // Death / respawn flow
++    if (!sim->ent_alive(camera.get_player())) {
++        if (respawn_cooldown > 0) {
++            respawn_cooldown--;
++            return;
++        }
++        Entity &player = alloc_player(sim, camera.get_team());
++        player_spawn(sim, camera, player);
++        player.set_name(name);
++        respawn_cooldown = BotConfig::RESPAWN_COOLDOWN_TICKS;
++        return;
++    }
++
++    Entity &player = sim->get_ent(camera.get_player());
++
++    // Find nearest mob within vision radius
++    EntityID nearest_mob = NULL_ENTITY;
++    float nearest_dist = 1e9f;
++    sim->spatial_hash.query(
++        player.get_x(), player.get_y(),
++        BotConfig::VISION_RADIUS, BotConfig::VISION_RADIUS,
++        [&](Simulation *, Entity &ent) {
++            if (!ent.has_component(kMob)) return;
++            if (!sim->ent_alive(ent.id)) return;
++            float d = distance_between(player, ent);
++            if (d < nearest_dist) {
++                nearest_dist = d;
++                nearest_mob = ent.id;
++            }
++        }
++    );
++
++    bool low_health = (player.health < player.max_health * BotConfig::FLEE_HEALTH_RATIO);
++
++    Vector accel;
++    uint8_t input_flags = 0;
++
++    if (low_health && nearest_mob != NULL_ENTITY) {
++        // Flee: move away from nearest mob
++        Entity &mob = sim->get_ent(nearest_mob);
++        accel = Vector(player.get_x() - mob.get_x(), player.get_y() - mob.get_y());
++        if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
++    } else if (nearest_mob != NULL_ENTITY) {
++        // Engage: move toward mob, attack
++        Entity &mob = sim->get_ent(nearest_mob);
++        accel = Vector(mob.get_x() - player.get_x(), mob.get_y() - player.get_y());
++        if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
++        BitMath::set(input_flags, InputFlags::kAttacking);
++    } else {
++        // Wander
++        if (wander_change_cooldown <= 0) {
++            wander_target_x = player.get_x() + (frand() - 0.5f) * BotConfig::WANDER_RANGE;
++            wander_target_y = player.get_y() + (frand() - 0.5f) * BotConfig::WANDER_RANGE;
++            wander_change_cooldown = BotConfig::WANDER_CHANGE_TICKS;
++        } else {
++            wander_change_cooldown--;
++        }
++        accel = Vector(wander_target_x - player.get_x(), wander_target_y - player.get_y());
++        float m = accel.magnitude();
++        if (m > BotConfig::WANDER_STOP_DIST) accel.set_magnitude(PLAYER_ACCELERATION);
++        else accel.set(0, 0);
++    }
++
++    player.acceleration = accel;
++    player.input = input_flags;
++}
+diff --git a/Server/Bot.hh b/Server/Bot.hh
+new file mode 100644
+index 0000000..bcf26c2
+--- /dev/null
++++ b/Server/Bot.hh
+@@ -0,0 +1,22 @@
++#pragma once
++
++#include <Shared/Entity.hh>
++
++#include <cstdint>
++#include <string>
++
++class Simulation;
++
++enum class BotTier : uint8_t { Rookie, Competitor, Veteran };
++
++struct Bot {
++    EntityID camera_id;            // owned camera entity ID (never invalidated for bot's lifetime)
++    BotTier tier;
++    std::string name;
++    int respawn_cooldown;          // ticks until respawn after death (<= 0 means ready / not waiting)
++    int wander_change_cooldown;    // ticks until pick new wander target
++    float wander_target_x;
++    float wander_target_y;
++
++    void tick(Simulation *sim);
++};
+diff --git a/Server/BotManager.cc b/Server/BotManager.cc
+new file mode 100644
+index 0000000..376db0f
+--- /dev/null
++++ b/Server/BotManager.cc
+@@ -0,0 +1,74 @@
++#include <Server/BotManager.hh>
++
++#include <Server/PetalTracker.hh>
++#include <Server/Spawn.hh>
++
++#include <Shared/Entity.hh>
++#include <Shared/Simulation.hh>
++#include <Shared/StaticData.hh>
++#include <Shared/StaticDefinitions.hh>
++
++namespace BotTiers {
++    PetalID::T const *get_inventory(BotTier tier);
++    uint32_t get_random_level(BotTier tier);
++}
++namespace BotNames {
++    std::string pick(BotTier tier, uint32_t index);
++}
++
++namespace {
++    constexpr int N_ROOKIES     = 10;
++    constexpr int N_COMPETITORS = 3;
++    constexpr int N_VETERANS    = 2;
++
++    // Inline the parts of alloc_cpu_camera we need, with our tier-specific config.
++    // We avoid calling alloc_cpu_camera directly because it sets respawn_level/inventory
++    // we'd just override, and side-effects (PetalTracker) we'd need to undo.
++    Entity &alloc_bot_camera(Simulation *sim, BotTier tier) {
++        Entity &cam = sim->alloc_ent();
++        cam.add_component(kCamera);
++        cam.add_component(kRelations);
++        cam.set_fov(BASE_FOV);
++        cam.set_team(NULL_ENTITY);
++        cam.set_color(ColorID::kGray);
++        cam.set_respawn_level(BotTiers::get_random_level(tier));
++
++        PetalID::T const *inv = BotTiers::get_inventory(tier);
++        for (uint32_t i = 0; i < 8 && i < MAX_SLOT_COUNT; ++i) {
++            cam.set_inventory(i, inv[i]);
++            PetalTracker::add_petal(sim, inv[i]);
++        }
++        return cam;
++    }
++
++    Bot make_bot(Simulation *sim, BotTier tier, uint32_t name_index) {
++        Entity &camera = alloc_bot_camera(sim, tier);
++        Entity &player = alloc_player(sim, camera.get_team());
++        player_spawn(sim, camera, player);
++
++        Bot bot;
++        bot.camera_id              = camera.id;
++        bot.tier                   = tier;
++        bot.name                   = BotNames::pick(tier, name_index);
++        bot.respawn_cooldown       = 0;  // alive; cooldown counts down only when dead
++        bot.wander_change_cooldown = 0;
++        bot.wander_target_x        = player.get_x();
++        bot.wander_target_y        = player.get_y();
++        player.set_name(bot.name);
++        return bot;
++    }
++}
++
++void BotManager::init(Simulation *sim) {
++    bots.clear();
++    bots.reserve(N_ROOKIES + N_COMPETITORS + N_VETERANS);
++    for (int i = 0; i < N_ROOKIES;     ++i) bots.push_back(make_bot(sim, BotTier::Rookie,     i));
++    for (int i = 0; i < N_COMPETITORS; ++i) bots.push_back(make_bot(sim, BotTier::Competitor, i));
++    for (int i = 0; i < N_VETERANS;    ++i) bots.push_back(make_bot(sim, BotTier::Veteran,    i));
++}
++
++void BotManager::tick(Simulation *sim) {
++    for (Bot &bot : bots) {
++        bot.tick(sim);
++    }
++}
+diff --git a/Server/BotManager.hh b/Server/BotManager.hh
+new file mode 100644
+index 0000000..69c6bca
+--- /dev/null
++++ b/Server/BotManager.hh
+@@ -0,0 +1,14 @@
++#pragma once
++
++#include <Server/Bot.hh>
++
++#include <vector>
++
++class Simulation;
++
++class BotManager {
++    std::vector<Bot> bots;
++public:
++    void init(Simulation *sim);
++    void tick(Simulation *sim);
++};
+diff --git a/Server/CMakeLists.txt b/Server/CMakeLists.txt
+index 79fee10..c13be7f 100644
+--- a/Server/CMakeLists.txt
++++ b/Server/CMakeLists.txt
+@@ -22,6 +22,8 @@ set(SOURCES
+     Process/Petal.cc
+     Process/Score.cc
+     Process/Segment.cc
++    Bot.cc
++    BotManager.cc
+     Client.cc
+     Game.cc
+     Main.cc
+diff --git a/Server/Game.cc b/Server/Game.cc
+index d744753..b567854 100644
+--- a/Server/Game.cc
++++ b/Server/Game.cc
+@@ -67,10 +67,12 @@ void GameInstance::init() {
+     team_manager.add_team(ColorID::kBlue);
+     team_manager.add_team(ColorID::kRed);
+     #endif
++    bot_manager.init(&simulation);
+ }
+ 
+ void GameInstance::tick() {
+     simulation.tick();
++    bot_manager.tick(&simulation);
+     for (Client *client : clients)
+         _update_client(&simulation, client);
+     simulation.post_tick();
+diff --git a/Server/Game.hh b/Server/Game.hh
+index 7f1787b..5b4d5e4 100644
+--- a/Server/Game.hh
++++ b/Server/Game.hh
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <Server/BotManager.hh>
+ #include <Server/TeamManager.hh>
+ 
+ #include <Shared/Simulation.hh>
+@@ -11,6 +12,7 @@ class Client;
+ class GameInstance {
+     std::set<Client *> clients;
+     TeamManager team_manager;
++    BotManager bot_manager;
+ public:
+     Simulation simulation;
+     GameInstance();

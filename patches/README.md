@@ -10,6 +10,7 @@
 | 0003 | `map-background-color.patch` | 地图底色 `0xff987d72`(棕) → `0xff2c8a3e`(绿) |
 | 0004 | `op-mode.patch` | **Super Fun Mode**:升级 /100、XP ×50、HP ×10、玩家伤害 ×20、怪伤害 ×0.1、掉率 ×20、密度 ×5、8 槽全开。目标:30 分钟通关完整游戏。8 个 multiplier 集中在新增的 `Shared/OpMode.hh`,Phase 2 admin 面板会改成运行时配置 |
 | 0005 | `super-starter-loadout.patch` | **OP 起手套装**:初次 spawn(`camera.inventory[0] == kNone`)时,在 `Server/Spawn.cc::player_spawn()` 自动给玩家 8 槽塞:Heaviest / Stinger / Yggdrasil / Rose / Faster / Tricac / Triplet / Peas。死亡重生不影响(那时 inventory 已不空) |
+| 0006 | `bot-system.patch` | **Bot 玩家系统(Phase 3)**:新 `Server/Bot.{hh,cc}` + `Server/BotManager.{hh,cc}`,启动时 spawn 15 个 bot(10 rookie level 1-10 / 3 competitor level 30-50 / 2 veteran level 70-99 with player-grade OP loadout)。每 tick 跑简单 FSM(wander/engage/flee/dead),用 spatial_hash 找最近 mob。GameInstance::{init,tick} 接入,CMakeLists 新增 .cc。 |
 
 ## 应用方式
 
