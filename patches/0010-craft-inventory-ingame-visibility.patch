@@ -820,10 +820,10 @@ index b45a227..86a97f7 100644
  }
 diff --git a/Client/Ui/TitleScreen/MetaSidebar.cc b/Client/Ui/TitleScreen/MetaSidebar.cc
 new file mode 100644
-index 0000000..4603bd3
+index 0000000..7f7e49a
 --- /dev/null
 +++ b/Client/Ui/TitleScreen/MetaSidebar.cc
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,125 @@
 +// Patch 0010: persistent left-side icon sidebar for meta-game panels.
 +//
 +// Why a separate file: Inventory/Craft panels are "meta" — they're player
@@ -845,7 +845,9 @@ index 0000000..4603bd3
 +
 +#include <Client/Ui/Button.hh>
 +#include <Client/Ui/Container.hh>
-+#include <Client/Ui/StaticIcon.hh>
++// StaticIcon is pulled in transitively via Ui.hh — adding it explicitly
++// triggers a redefinition error because StaticIcon.hh lacks include guards
++// (caught the hard way on the first build).
 +#include <Client/Ui/StaticText.hh>
 +#include <Client/Ui/Extern.hh>
 +
