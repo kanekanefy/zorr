@@ -1,0 +1,3 @@
+[submodule "upstream/gardn"]
+	path = upstream/gardn
+	url = https://github.com/trigonal-bacon/gardn.git
