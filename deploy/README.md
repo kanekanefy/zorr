@@ -19,6 +19,27 @@ git push origin main
   - API 字段:`refreshToken`
 - 泄露/作废:在 Dokploy UI 点 "Regenerate" 后,`gh secret set DOKPLOY_WEBHOOK_URL` 更新 GHA。
 
+## 🚫 什么 push 不触发 deploy(2026-05-24 加)
+
+CI 在 trigger 层就跳过这些 path,**不浪费构建分钟**:
+
+| 模式 | 例子 |
+|---|---|
+| `**.md` | 任何 markdown(`README.md`, `AGENTS.md`, `CLAUDE.md`, `patches/README.md`, ...) |
+| `docs/**` | 整个 `docs/` 目录(spec, plan, handoff 文档) |
+| `LICENSE-NOTICE.md` | 法律文本 |
+| `.gitignore` | 仓库元信息 |
+| `UPSTREAM_PIN.txt` | gardn 版本标记 |
+
+**显式 opt-out**(commit message 包含任一)— GitHub 原生支持:
+- `[skip ci]` / `[ci skip]`
+- `[no ci]`
+- `[skip actions]`
+
+**强制 deploy 即使没代码改**(应急 / 重新跑构建):
+- GitHub Actions UI → 选 workflow → "Run workflow" 按钮(workflow_dispatch)
+- 或本地:`gh workflow run build-and-push.yml --ref main`
+
 ## 手工 deploy(首次配置 / 应急 / 改 image 源)
 
 ```bash

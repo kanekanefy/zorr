@@ -1,8 +1,19 @@
 name: Build and Push
 
+# Trigger gating (2026-05-24):
+#   - Skip docs-only pushes (markdown, docs/, license, gitignore).
+#     Saves ~3 min of CI + a Dokploy redeploy that wouldn't change runtime.
+#   - `[skip ci]` in commit message is also honored (GitHub-native).
+#   - Manual override: always available via `workflow_dispatch` (Actions tab).
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE-NOTICE.md'
+      - '.gitignore'
+      - 'UPSTREAM_PIN.txt'
     tags: ['v*']
   workflow_dispatch:
 

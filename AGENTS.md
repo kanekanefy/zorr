@@ -190,6 +190,14 @@ namespace {
 
 webhook URL 在 repo secret `DOKPLOY_WEBHOOK_URL`,格式 `https://dok.inglegames.com/api/deploy/<application-refreshToken>`。token 在 Dokploy UI → Application → Settings → Auto Deploy。
 
+### 跳过 deploy(2026-05-24 加)
+
+**默认跳过**:`paths-ignore` 在 workflow trigger 层就过滤了 `**.md`、`docs/**`、`LICENSE-NOTICE.md`、`.gitignore`、`UPSTREAM_PIN.txt`——纯文档 push 不会跑 build,不会触发 redeploy。
+
+**显式跳过**(代码改了但不想 deploy):commit message 加 `[skip ci]`。
+
+**强制 deploy**(没代码改但想重新滚一次):Actions UI → "Run workflow",或 `gh workflow run build-and-push.yml --ref main`。
+
 详情:[`deploy/README.md`](deploy/README.md)。
 
 ---
