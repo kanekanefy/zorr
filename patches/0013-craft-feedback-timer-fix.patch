@@ -1,0 +1,80 @@
+diff --git a/Client/Ui/TitleScreen/Craft.cc b/Client/Ui/TitleScreen/Craft.cc
+index 7126074..54b21af 100644
+--- a/Client/Ui/TitleScreen/Craft.cc
++++ b/Client/Ui/TitleScreen/Craft.cc
+@@ -237,29 +237,43 @@ Element *make_petal_grid() {
+     return grid;
+ }
+ 
+-// Patch 0012: prominent success/fail banners. Original feedback was a 12pt
+-// dim yellow line at the bottom of a bottom-anchored panel — easily missed,
+-// and worse, often hidden behind the level bar / loadout strip. Now: two
+-// big colored banners (green/red) shown right under the panel title for
+-// 8 seconds. Easy to see, hard to miss.
+-constexpr double RESULT_DISPLAY_SECONDS = 8.0;
++// Patch 0013: fix invisible-banner bug. Game::timestamp is in milliseconds
++// (assigned from requestAnimationFrame via Game::tick), but patch 0012's
++// RESULT_DISPLAY_SECONDS was 8.0 — so the banner only showed for 8 ms
++// (under one frame). Use ms units explicitly. Also bumped font to 20pt and
++// added an inline petal sprite next to the success text so the player can
++// instantly see WHICH petal they crafted.
++constexpr double RESULT_DISPLAY_MS = 8000.0;
++
++// Small Element that draws the last-crafted petal sprite. We pre-build it
++// once and let on_render read Game::last_craft_result live each frame.
++class LastResultPetalSprite final : public Element {
++public:
++    LastResultPetalSprite() : Element(28, 28, {}) {}
++    virtual void on_render(Renderer &ctx) override {
++        if (!Game::last_craft_success) return;
++        ctx.scale(width / 60);
++        draw_loadout_background(ctx, Game::last_craft_result);
++    }
++};
+ 
+ Element *make_success_banner() {
+     return new Ui::HContainer({
+-        new Ui::DynamicText(18, []() {
++        new LastResultPetalSprite(),
++        new Ui::DynamicText(20, []() {
+             if (!Game::last_craft_success) return std::string("");
+             return std::format("✓ Crafted {} (+1)",
+                 PETAL_DATA[Game::last_craft_result].name);
+         }, { .fill = 0xffffffff, .h_justify = Style::Left })
+-    }, 10, 0, {
++    }, 10, 8, {
+         .fill = 0xff2da64f,           // bright green
+         .stroke_hsv = 0.6,
+         .line_width = 2,
+         .round_radius = 4,
+         .should_render = []() {
+-            double age = Game::timestamp - Game::last_craft_timestamp;
++            double age_ms = Game::timestamp - Game::last_craft_timestamp;
+             return Game::last_craft_success
+-                && age <= RESULT_DISPLAY_SECONDS
++                && age_ms <= RESULT_DISPLAY_MS
+                 && Game::last_craft_timestamp >= 0;
+         },
+         .h_justify = Style::Left
+@@ -268,7 +282,7 @@ Element *make_success_banner() {
+ 
+ Element *make_failure_banner() {
+     return new Ui::HContainer({
+-        new Ui::DynamicText(18, []() {
++        new Ui::DynamicText(20, []() {
+             if (Game::last_craft_success) return std::string("");
+             if (Game::last_craft_destroyed == 0) return std::string("");
+             return std::format("✗ Failed — lost {} petal{}",
+@@ -281,10 +295,10 @@ Element *make_failure_banner() {
+         .line_width = 2,
+         .round_radius = 4,
+         .should_render = []() {
+-            double age = Game::timestamp - Game::last_craft_timestamp;
++            double age_ms = Game::timestamp - Game::last_craft_timestamp;
+             return !Game::last_craft_success
+                 && Game::last_craft_destroyed > 0
+-                && age <= RESULT_DISPLAY_SECONDS
++                && age_ms <= RESULT_DISPLAY_MS
+                 && Game::last_craft_timestamp >= 0;
+         },
+         .h_justify = Style::Left
