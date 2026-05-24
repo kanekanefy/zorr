@@ -1,0 +1,198 @@
+diff --git a/Client/Game.cc b/Client/Game.cc
+index 31930ed..7c9af5d 100644
+--- a/Client/Game.cc
++++ b/Client/Game.cc
+@@ -50,6 +50,12 @@ namespace Game {
+     uint8_t    craft_slot_count = 0;
+     uint8_t    craft_active_rarity = RarityID::kCommon;
+ 
++    // Patch 0015: drag-from-inventory state. The Inventory panel's cells set
++    // this to their petal_id on kMouseDown; Game::tick watches for mouse
++    // release while it's set, finds the loadout slot under the cursor, and
++    // sends kEquipFromInventory. Reset to kNone when drag ends or cancels.
++    PetalID::T inventory_drag_id = PetalID::kNone;
++
+     double timestamp = 0;
+ 
+     double score = 0;
+@@ -300,12 +306,60 @@ void Game::tick(double time) {
+         // set when it gets large — cheap and correctness-safe (worst case
+         // a single missed dedupe right after clear).
+         if (counted_drops.size() > 1024) counted_drops.clear();
++
++        // Patch 0015: drag-from-inventory release detection. Inventory cells
++        // set Game::inventory_drag_id on kMouseDown; we watch for mouse
++        // release here and, if it happens over a loadout slot, send the
++        // equip message. Visually-distinct from the existing LoadoutPetal
++        // swap drag (which uses UiLoadoutPetal::selected); this one is a
++        // pure data flow without a follow-the-mouse ghost (v1 keeps it
++        // simple — release-over-slot is enough to be discoverable).
++        if (Game::inventory_drag_id != PetalID::kNone
++            && BitMath::at(Input::mouse_buttons_released, Input::LeftMouse)) {
++            float mx = Input::mouse_x, my = Input::mouse_y;
++            uint8_t hit = (uint8_t)-1;
++            float best = 1e9;
++            // Match the loadout backgrounds' hit-test geometry (see
++            // LoadoutPetal.cc::find_viable_target). 2*MAX_SLOT_COUNT
++            // excludes the trash slot — we only equip onto real slots.
++            for (uint8_t i = 0; i < 2 * MAX_SLOT_COUNT; ++i) {
++                Ui::UiLoadoutSlot *slot = Ui::UiLoadout::petal_backgrounds[i];
++                if (slot == nullptr) continue;
++                float dist = std::max(fabsf(mx - slot->screen_x), fabsf(my - slot->screen_y));
++                if (dist >= (slot->width + 20) * Ui::scale / 2) continue;
++                if (dist >= best) continue;
++                best = dist; hit = i;
++            }
++            if (hit != (uint8_t)-1) {
++                // dynamic_to_static: primary row (0..MAX-1) maps 1:1, secondary
++                // (MAX..2*MAX-1) collapses any gap when loadout_count < MAX.
++                uint8_t dyn = hit;
++                uint8_t pos = dyn;
++                if (dyn >= MAX_SLOT_COUNT)
++                    pos = dyn - (MAX_SLOT_COUNT - Game::loadout_count);
++                if (pos < MAX_SLOT_COUNT + Game::loadout_count) {
++                    PetalID::T new_id = Game::inventory_drag_id;
++                    PetalID::T old_id = Game::cached_loadout[pos];
++                    // Local inventory bookkeeping: consume the new petal,
++                    // refund the displaced one (matches server's logical
++                    // intent even though server doesn't track inventory).
++                    if (Game::persistent_inventory[new_id] > 0)
++                        Game::persistent_inventory[new_id]--;
++                    if (old_id != PetalID::kNone && old_id < PetalID::kNumPetals)
++                        Game::persistent_inventory[old_id]++;
++                    Game::equip_from_inventory(pos, new_id);
++                }
++            }
++            Game::inventory_drag_id = PetalID::kNone;
++        }
+     } else {
+         player_id = NULL_ENTITY;
+         overlevel_timer = 0;
+         // Reset prev tracker on death so re-equip after respawn doesn't
+         // double-count surviving petals.
+         Game::prev_cached_loadout.fill(PetalID::kNone);
++        // Patch 0015: drop any pending drag if we transitioned out of life.
++        Game::inventory_drag_id = PetalID::kNone;
+     }
+ 
+     //event poll
+diff --git a/Client/Game.hh b/Client/Game.hh
+index e294415..66cf3fd 100644
+--- a/Client/Game.hh
++++ b/Client/Game.hh
+@@ -81,6 +81,15 @@ namespace Game {
+     void delete_petal(uint8_t);
+     void swap_petals(uint8_t, uint8_t);
+     void swap_all_petals();
++    // Patch 0015: equip a petal_id from the client's inventory into a slot.
++    // Decrements persistent_inventory[id], refunds the old slot occupant.
++    void equip_from_inventory(uint8_t pos, PetalID::T id);
++
++    // Patch 0015: drag-from-inventory state, shared between
++    // Inventory/Craft panel cells (drag source) and the per-tick
++    // release detector in Game::tick (which talks to loadout slots).
++    // kNone = not currently dragging.
++    extern PetalID::T inventory_drag_id;
+     void on_message(uint8_t *, uint32_t);
+     void poll_ui_event(Ui::ScreenEvent const &);
+ };
+diff --git a/Client/Network.cc b/Client/Network.cc
+index 16ebff7..972c445 100644
+--- a/Client/Network.cc
++++ b/Client/Network.cc
+@@ -86,4 +86,18 @@ void Game::swap_all_petals() {
+     if (!Game::alive()) return;
+     for (uint32_t i = 0; i < Game::loadout_count; ++i)
+         Ui::ui_swap_petals(i, i + Game::loadout_count);
++}
++
++// Patch 0015: send "equip this inventory petal into this loadout slot."
++// The client also adjusts persistent_inventory locally (decrement new, refund
++// old) so the inventory panel reflects the change immediately, before the
++// server's loadout-sync round-trip arrives.
++void Game::equip_from_inventory(uint8_t pos, PetalID::T id) {
++    Writer writer(static_cast<uint8_t *>(OUTGOING_PACKET));
++    if (!Game::alive()) return;
++    if (id == PetalID::kNone || id >= PetalID::kNumPetals) return;
++    writer.write<uint8_t>(Serverbound::kEquipFromInventory);
++    writer.write<uint8_t>(pos);
++    writer.write<uint8_t>((uint8_t)id);
++    socket.send(writer.packet, writer.at - writer.packet);
+ }
+\ No newline at end of file
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index 88ff6ed..0f0570b 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -62,6 +62,16 @@ namespace {
+             draw_loadout_background(ctx, id);
+         }
+         virtual void on_event(uint8_t event) override {
++            if (event == kMouseDown) {
++                // Patch 0015: start a drag-to-loadout-slot. The release
++                // detector in Game::tick reads inventory_drag_id and, on
++                // mouse release over a loadout slot, sends kEquipFromInventory.
++                // Only start drag if we have at least 1 of this petal AND
++                // we're in game (no loadout to drop onto on title screen).
++                if (Game::alive() && Game::persistent_inventory[id] > 0) {
++                    Game::inventory_drag_id = id;
++                }
++            }
+             if (event != kFocusLost) {
+                 rendering_tooltip = 1;
+                 tooltip = Ui::UiLoadout::petal_tooltips[id];
+diff --git a/Server/Client.cc b/Server/Client.cc
+index 284b10d..62541a2 100644
+--- a/Server/Client.cc
++++ b/Server/Client.cc
+@@ -147,6 +147,36 @@ void Client::on_message(WebSocket *ws, std::string_view message, uint64_t code)
+             player.set_loadout_ids(pos2, tmp);
+             break;
+         }
++        // Patch 0015: equip a petal_id from the client's inventory directly
++        // into a loadout slot. Inventory state lives only on the client
++        // (persistent_inventory, persisted via Storage.cc), so there's no
++        // server-side ownership check — we trust the client. Sanity-check
++        // the slot index and petal_id range; everything else is "client
++        // policy." This is consistent with the rest of the gardn protocol
++        // which already trusts client picks (kPetalSwap, kPetalDelete).
++        case Serverbound::kEquipFromInventory: {
++            if (!client->alive()) break;
++            Simulation *simulation = &client->game->simulation;
++            Entity &camera = simulation->get_ent(client->camera);
++            Entity &player = simulation->get_ent(camera.get_player());
++            if (client->check_invalid(validator.validate_uint8() && validator.validate_uint8())) return;
++            uint8_t pos = reader.read<uint8_t>();
++            uint8_t pid_raw = reader.read<uint8_t>();
++            if (pos >= MAX_SLOT_COUNT + player.get_loadout_count()) break;
++            if (pid_raw == PetalID::kNone || pid_raw >= PetalID::kNumPetals) break;
++            PetalID::T new_id = (PetalID::T)pid_raw;
++            // Same path as Spawn.cc::player_spawn — set loadout id, then if
++            // the slot is "active" (in the primary row) make sure the slot
++            // gets re-spawned with the new petal type. set_loadout_ids
++            // handles secondaries automatically.
++            player.set_loadout_ids(pos, new_id);
++            if (pos < player.get_loadout_count()) {
++                LoadoutSlot &slot = player.loadout[pos];
++                slot.update_id(simulation, new_id);
++                slot.force_reload();
++            }
++            break;
++        }
+     }
+ }
+ 
+diff --git a/Shared/Binary.hh b/Shared/Binary.hh
+index 377b0da..2d2ab64 100644
+--- a/Shared/Binary.hh
++++ b/Shared/Binary.hh
+@@ -15,7 +15,8 @@ enum Serverbound {
+     kClientInput,
+     kClientSpawn,
+     kPetalSwap,
+-    kPetalDelete
++    kPetalDelete,
++    kEquipFromInventory  // Patch 0015: replace loadout[slot] with a petal_id from client inventory
+ };
+ 
+ enum CloseReason {
