@@ -1,0 +1,121 @@
+diff --git a/Client/Assets/Mob.cc b/Client/Assets/Mob.cc
+index c9bc7da..24f00a8 100644
+--- a/Client/Assets/Mob.cc
++++ b/Client/Assets/Mob.cc
+@@ -804,6 +804,49 @@ void draw_static_mob(MobID::T mob_id, Renderer &ctx, MobRenderAttributes attr) {
+             ctx.fill();
+             break;
+         }
++        case MobID::kWorm: {
++            // Patch 0018: chunky segmented earthy body. Same "two end caps
++            // + main bell" skeleton as Centipede (so it composes correctly
++            // when the Segmented system stitches the body together), but
++            // with a darker brown-red palette and bigger eye dots so it
++            // visually reads as "Worm, not Centipede." Antennae omitted —
++            // worms don't have them, and skipping them keeps draw cost
++            // lower for what's already a tankier mob to render in groups.
++            SET_BASE_COLOR(0xff8b5a3c)  // earthy brown-red
++            ctx.set_fill(0xff2a1810);
++            ctx.begin_path();
++            ctx.arc(0, -32, 17);  // back cap (slightly larger than centipede)
++            ctx.fill();
++            ctx.begin_path();
++            ctx.arc(0, 32, 17);   // front cap
++            ctx.fill();
++            ctx.begin_path();
++            ctx.arc(0, 0, 38);    // main body bell
++            ctx.set_fill(base_color);
++            ctx.fill();
++            ctx.set_stroke(Renderer::HSV(base_color, 0.7));
++            ctx.set_line_width(8);
++            ctx.stroke();
++            // Two eye dots on the head segment (forward = +y direction here,
++            // matching how Centipede draws the head).
++            if (!BitMath::at(flags, 1)) {
++                ctx.set_fill(0xffffffff);
++                ctx.begin_path();
++                ctx.arc(-9, 30, 5);
++                ctx.fill();
++                ctx.begin_path();
++                ctx.arc(9, 30, 5);
++                ctx.fill();
++                ctx.set_fill(0xff111111);
++                ctx.begin_path();
++                ctx.arc(-9, 30, 2.5);
++                ctx.fill();
++                ctx.begin_path();
++                ctx.arc(9, 30, 2.5);
++                ctx.fill();
++            }
++            break;
++        }
+         default:
+             assert(!"Didn't cover mob render");
+             break;
+diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
+index 72307c3..a393d0b 100644
+--- a/Shared/StaticData.cc
++++ b/Shared/StaticData.cc
+@@ -1134,6 +1134,25 @@ std::array<struct MobData, MobID::kNumMobs> const MOB_DATA = {{
+             .stationary = 1
+         }
+     },
++    {
++        // Patch 0018: Worm — segmented earthy mob, slow but tanky. Similar
++        // shape to Centipede but visually distinct (brown/red, smaller eyes,
++        // chunkier segments). Drops valuable mid-rarity loot to give the
++        // crafting loop something interesting to consume past commons.
++        .name = "Worm",
++        .description = "Crawls out of the soil. Slow, heavy, and chock-full of petals.",
++        .rarity = RarityID::kRare,
++        .health = {120.0, 180.0},
++        .damage = 14.0,
++        .radius = {40.0},
++        .xp = 8,
++        .drops = {
++            PetalID::kHeavy, PetalID::kRock, PetalID::kHeaviest, PetalID::kPeas, PetalID::kLeaf, PetalID::kMoon
++        },
++        .attributes = {
++            .segments = 8
++        }
++    },
+ }};
+ 
+ std::array<StaticArray<float, MAX_DROPS_PER_MOB>, MobID::kNumMobs> const MOB_DROP_CHANCES = [](){
+diff --git a/Shared/StaticData.hh b/Shared/StaticData.hh
+index 54bcedb..3853d38 100644
+--- a/Shared/StaticData.hh
++++ b/Shared/StaticData.hh
+@@ -45,6 +45,10 @@ inline std::array const MAP_DATA = std::to_array<struct ZoneDefinition>({
+             // poison teacher. Weights chosen so they're common but not flooding.
+             { MobID::kBubbleMob, 80000 },
+             { MobID::kMushroom, 30000 },
++            // Patch 0018: rare Worm sighting in Easy zone — visual variety
++            // for new players, but tiny weight so it's a "ooh" moment, not
++            // a roadblock (Worm is Rare-tier and tanky).
++            { MobID::kWorm, 1500 },
+             { MobID::kSquare, 1 }
+         },
+         .difficulty = 0,
+@@ -95,6 +99,9 @@ inline std::array const MAP_DATA = std::to_array<struct ZoneDefinition>({
+             // Phase 6 — Jellyfish lives in Hard zone (Rare, high damage).
+             // Rare weight so it's a "ooh shiny" sighting, not background noise.
+             { MobID::kJellyfish, 8000 },
++            // Patch 0018: Worm is at home in the Hard zone — segmented body
++            // makes it feel like a tougher Centipede, drops mid-rarity loot.
++            { MobID::kWorm, 25000 },
+             { MobID::kSquare, 1 }
+         },
+         .difficulty = 2,
+diff --git a/Shared/StaticDefinitions.hh b/Shared/StaticDefinitions.hh
+index 817e7bb..4582610 100644
+--- a/Shared/StaticDefinitions.hh
++++ b/Shared/StaticDefinitions.hh
+@@ -111,6 +111,7 @@ namespace MobID {
+         kJellyfish,
+         kMushroom,
+         kBubbleMob, // mob; distinct from PetalID::kBubble
++        kWorm,      // patch 0018: segmented earthy mob, like a slow tanky centipede
+         kNumMobs
+     };
+ };
