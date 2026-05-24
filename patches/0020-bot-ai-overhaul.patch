@@ -1,0 +1,150 @@
+diff --git a/Server/Bot.cc b/Server/Bot.cc
+index 6ba64d7..271547f 100644
+--- a/Server/Bot.cc
++++ b/Server/Bot.cc
+@@ -14,17 +14,40 @@
+ #include <cmath>
+ 
+ namespace BotConfig {
+-    constexpr int   RESPAWN_COOLDOWN_TICKS = 5 * 20;   // 5s @ TPS=20
+-    constexpr int   WANDER_CHANGE_TICKS    = 5 * 20;   // pick new wander target every 5s
+-    constexpr float VISION_RADIUS          = 500.0f;
++    // Patch 0020: bot AI overhaul — shorter wait times, per-tier behavior,
++    // active strafe and wander-jitter so bots stop looking like statues.
++    constexpr int   RESPAWN_COOLDOWN_TICKS = 2 * 20;   // 2s (was 5s — long death pauses made the map feel empty)
++    constexpr int   WANDER_CHANGE_BASE     = 1 * 20;   // baseline ~1s between wander target picks
++    constexpr int   WANDER_CHANGE_JITTER   = 2 * 20;   // + 0..2s random — desynced bots wander on different beats
+     constexpr float FLEE_HEALTH_RATIO      = 0.30f;
+     constexpr float WANDER_RANGE           = 1500.0f;  // half-width of wander target offset
+-    constexpr float WANDER_STOP_DIST       = 50.0f;    // close enough to wander target → stop
+-    // Patch 0011: stop accelerating into the target once we're within fight
+-    // range. Petals when attacking orbit at ~r+100 (Flower.cc:188), so we
+-    // want to sit just inside that — close enough that the orbit sweep
+-    // covers the target, far enough that we're not wedged against it.
+-    constexpr float FIGHT_RANGE            = 90.0f;
++    constexpr float WANDER_STOP_DIST       = 20.0f;    // tighter "arrived" zone so they pick new targets sooner
++    constexpr float IDLE_JITTER_ACCEL      = 0.3f;     // tiny random nudge when wandering at zero velocity, so they don't freeze
++    // Per-tier engagement: Rookies hang back (timid noobs), Veterans rush in
++    // (confident endgamers). Vision matches — Vets see further. Strafe scale
++    // is how much perpendicular wobble during engage — looks like circle-strafing.
++    constexpr float FIGHT_RANGE_ROOKIE     = 110.0f;
++    constexpr float FIGHT_RANGE_COMPETITOR = 70.0f;
++    constexpr float FIGHT_RANGE_VETERAN    = 45.0f;
++    constexpr float VISION_ROOKIE          = 400.0f;
++    constexpr float VISION_COMPETITOR      = 500.0f;
++    constexpr float VISION_VETERAN         = 650.0f;
++    constexpr float STRAFE_AMPLITUDE       = 0.6f;     // 0..1 fraction of PLAYER_ACCELERATION used for sideways motion
++
++    inline float fight_range(BotTier t) {
++        switch (t) {
++            case BotTier::Veteran:    return FIGHT_RANGE_VETERAN;
++            case BotTier::Competitor: return FIGHT_RANGE_COMPETITOR;
++            default:                  return FIGHT_RANGE_ROOKIE;
++        }
++    }
++    inline float vision(BotTier t) {
++        switch (t) {
++            case BotTier::Veteran:    return VISION_VETERAN;
++            case BotTier::Competitor: return VISION_COMPETITOR;
++            default:                  return VISION_ROOKIE;
++        }
++    }
+ }
+ 
+ namespace BotNames {
+@@ -124,9 +147,10 @@ void Bot::tick(Simulation *sim) {
+     // player entity (set in BotManager::make_bot / Bot::tick on respawn).
+     EntityID nearest_target = NULL_ENTITY;
+     float nearest_dist = 1e9f;
++    float vision = BotConfig::vision(tier);
+     sim->spatial_hash.query(
+         player.get_x(), player.get_y(),
+-        BotConfig::VISION_RADIUS, BotConfig::VISION_RADIUS,
++        vision, vision,
+         [&](Simulation *, Entity &ent) {
+             if (!sim->ent_alive(ent.id)) return;
+             bool is_target = false;
+@@ -152,38 +176,68 @@ void Bot::tick(Simulation *sim) {
+     Vector accel;
+     uint8_t input_flags = 0;
+ 
++    float fight_range = BotConfig::fight_range(tier);
++
+     if (low_health && nearest_target != NULL_ENTITY) {
+-        // Flee: move away from nearest target
++        // Flee: move away from nearest target.
+         Entity &target = sim->get_ent(nearest_target);
+         accel = Vector(player.get_x() - target.get_x(), player.get_y() - target.get_y());
+         if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
+     } else if (nearest_target != NULL_ENTITY) {
+-        // Engage: move toward target up to fight range, then hold position so
+-        // orbiting petals sweep through the target. Without the hold, bots
+-        // accelerate every tick into the mob and wedge themselves against
+-        // it; the surrounding mob blob then physically traps them.
++        // Engage: move toward target up to fight range, then circle-strafe
++        // around it (Patch 0020). Standing still made bots look frozen and
++        // their petals' attack arc only grazed the mob's edge — strafing
++        // sweeps the petal orbit fully across the target's hitbox AND looks
++        // alive. The strafe direction uses the camera id as a per-bot phase
++        // so a clump of bots near the same mob don't all wobble in sync.
+         Entity &target = sim->get_ent(nearest_target);
+         Vector to(target.get_x() - player.get_x(), target.get_y() - player.get_y());
+-        if (to.magnitude() > BotConfig::FIGHT_RANGE) {
++        float dist = to.magnitude();
++        if (dist > fight_range) {
++            // Approach
+             accel = to;
+-            if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
++            accel.set_magnitude(PLAYER_ACCELERATION);
+         } else {
+-            accel.set(0, 0);
++            // Inside fight range — circle-strafe. Build a perpendicular
++            // direction (rotate `to` by 90°). A slow sine phase reverses
++            // direction every ~2s so bots arc back and forth, never wedging.
++            Vector perp;
++            if (dist > 0.01f) perp.set(-to.y / dist, to.x / dist);
++            else              perp.set(1, 0);
++            float phase = (float)(camera.id.id) * 0.7f + (float)(player.ai_tick) * 0.05f;
++            float swing = std::sin(phase);
++            accel = perp * (swing * BotConfig::STRAFE_AMPLITUDE * PLAYER_ACCELERATION);
++            // Tiny inward bias if we drifted out — keeps us in fight range.
++            if (dist > fight_range * 1.2f) accel += to * (PLAYER_ACCELERATION / dist);
+         }
+         BitMath::set(input_flags, InputFlags::kAttacking);
++        player.ai_tick++;
+     } else {
+-        // Wander
+-        if (wander_change_cooldown <= 0) {
++        // Wander. Pick new target whenever cooldown expires OR we arrived at
++        // the current target — both keep the bot visibly in motion.
++        Vector to(wander_target_x - player.get_x(), wander_target_y - player.get_y());
++        float dist_to_target = to.magnitude();
++        bool arrived = dist_to_target <= BotConfig::WANDER_STOP_DIST;
++        if (wander_change_cooldown <= 0 || arrived) {
+             wander_target_x = player.get_x() + (frand() - 0.5f) * BotConfig::WANDER_RANGE;
+             wander_target_y = player.get_y() + (frand() - 0.5f) * BotConfig::WANDER_RANGE;
+-            wander_change_cooldown = BotConfig::WANDER_CHANGE_TICKS;
++            wander_change_cooldown = BotConfig::WANDER_CHANGE_BASE
++                + (int)(frand() * BotConfig::WANDER_CHANGE_JITTER);
++            to.set(wander_target_x - player.get_x(), wander_target_y - player.get_y());
++            dist_to_target = to.magnitude();
+         } else {
+             wander_change_cooldown--;
+         }
+-        accel = Vector(wander_target_x - player.get_x(), wander_target_y - player.get_y());
+-        float m = accel.magnitude();
+-        if (m > BotConfig::WANDER_STOP_DIST) accel.set_magnitude(PLAYER_ACCELERATION);
+-        else accel.set(0, 0);
++        if (dist_to_target > BotConfig::WANDER_STOP_DIST) {
++            accel = to;
++            accel.set_magnitude(PLAYER_ACCELERATION);
++        } else {
++            // Always-on idle jitter — random tiny nudge so they don't freeze
++            // on a wander target. Looks like a player adjusting position.
++            accel.set(
++                (frand() - 0.5f) * BotConfig::IDLE_JITTER_ACCEL * PLAYER_ACCELERATION,
++                (frand() - 0.5f) * BotConfig::IDLE_JITTER_ACCEL * PLAYER_ACCELERATION);
++        }
+     }
+ 
+     player.acceleration = accel;

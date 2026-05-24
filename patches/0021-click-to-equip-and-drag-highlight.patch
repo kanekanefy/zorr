@@ -1,0 +1,105 @@
+diff --git a/Client/Game.hh b/Client/Game.hh
+index 66cf3fd..c041e57 100644
+--- a/Client/Game.hh
++++ b/Client/Game.hh
+@@ -84,6 +84,11 @@ namespace Game {
+     // Patch 0015: equip a petal_id from the client's inventory into a slot.
+     // Decrements persistent_inventory[id], refunds the old slot occupant.
+     void equip_from_inventory(uint8_t pos, PetalID::T id);
++    // Patch 0021: convenience — equip to first empty slot (primary first,
++    // then secondary). Returns the slot used, or 0xff if no empty slot
++    // existed. Used by InventoryPetalCell click handler so the user can
++    // single-click to equip without learning drag-and-drop.
++    uint8_t equip_to_first_empty(PetalID::T id);
+ 
+     // Patch 0015: drag-from-inventory state, shared between
+     // Inventory/Craft panel cells (drag source) and the per-tick
+diff --git a/Client/Network.cc b/Client/Network.cc
+index 972c445..f5a8c40 100644
+--- a/Client/Network.cc
++++ b/Client/Network.cc
+@@ -100,4 +100,32 @@ void Game::equip_from_inventory(uint8_t pos, PetalID::T id) {
+     writer.write<uint8_t>(pos);
+     writer.write<uint8_t>((uint8_t)id);
+     socket.send(writer.packet, writer.at - writer.packet);
++}
++
++// Patch 0021: click-to-equip. Find the first slot that's actually empty
++// (kNone) — primary row first (preferred so the petal is immediately
++// usable), then secondary row. Caller already validated id and aliveness.
++// Returns 0xff if both rows are full (caller should leave drag mode on
++// for a manual drop, or just silently no-op).
++uint8_t Game::equip_to_first_empty(PetalID::T id) {
++    if (!Game::alive()) return 0xff;
++    if (id == PetalID::kNone || id >= PetalID::kNumPetals) return 0xff;
++    if (Game::persistent_inventory[id] == 0) return 0xff;
++    // Primary: indices 0..loadout_count-1 in static-pos space.
++    for (uint8_t pos = 0; pos < Game::loadout_count; ++pos) {
++        if (Game::cached_loadout[pos] == PetalID::kNone) {
++            Game::persistent_inventory[id]--;
++            Game::equip_from_inventory(pos, id);
++            return pos;
++        }
++    }
++    // Secondary: indices MAX_SLOT_COUNT..MAX_SLOT_COUNT+loadout_count-1.
++    for (uint8_t pos = MAX_SLOT_COUNT; pos < MAX_SLOT_COUNT + Game::loadout_count; ++pos) {
++        if (Game::cached_loadout[pos] == PetalID::kNone) {
++            Game::persistent_inventory[id]--;
++            Game::equip_from_inventory(pos, id);
++            return pos;
++        }
++    }
++    return 0xff;
+ }
+\ No newline at end of file
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index d80698b..68b7bad 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -46,7 +46,21 @@ namespace {
+                 .v_justify = Style::Top
+             }), id(pid) {}
+         virtual void on_render(Renderer &ctx) override {
++            // Patch 0021: highlight this cell brightly while it's the
++            // active drag source — gives visual confirmation that drag
++            // started. Restore the original style afterward (siblings will
++            // render with the same Style instance).
++            float saved_stroke = style.stroke_hsv;
++            float saved_lw = style.line_width;
++            if (Game::inventory_drag_id == id) {
++                style.stroke_hsv = 1.4f;
++                style.line_width = 4;
++            }
+             Element::on_render(ctx);
++            if (Game::inventory_drag_id == id) {
++                style.stroke_hsv = saved_stroke;
++                style.line_width = saved_lw;
++            }
+             uint32_t n = Game::persistent_inventory[id];
+             float text_y = height / 2 - 8;
+             ctx.translate(0, text_y);
+@@ -66,12 +80,22 @@ namespace {
+                 // Patch 0015: start a drag-to-loadout-slot. The release
+                 // detector in Game::tick reads inventory_drag_id and, on
+                 // mouse release over a loadout slot, sends kEquipFromInventory.
+-                // Only start drag if we have at least 1 of this petal AND
+-                // we're in game (no loadout to drop onto on title screen).
+                 if (Game::alive() && Game::persistent_inventory[id] > 0) {
+                     Game::inventory_drag_id = id;
+                 }
+             }
++            if (event == kClick) {
++                // Patch 0021: click-to-equip. If user release happened while
++                // still hovering this cell (no drag movement), auto-equip
++                // into the first empty slot. This is THE discoverability
++                // fix — users instinctively click, not drag. equip_to_first_empty
++                // also decrements persistent_inventory[id]. Always clear
++                // drag_id so the per-tick release detector doesn't double-fire.
++                if (Game::alive() && Game::persistent_inventory[id] > 0) {
++                    Game::equip_to_first_empty(id);
++                }
++                Game::inventory_drag_id = PetalID::kNone;
++            }
+             if (event != kFocusLost) {
+                 rendering_tooltip = 1;
+                 tooltip = Ui::UiLoadout::petal_tooltips[id];
