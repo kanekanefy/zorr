@@ -1,6 +1,6 @@
 # Patches
 
-应用在 `upstream/gardn/` 之上的纯外观补丁,由 Dockerfile 在 build 阶段
+应用在 `upstream/gardn/` 之上的补丁,由 Dockerfile 在 build 阶段
 按文件名顺序 `patch -p1` 应用。
 
 | # | 文件 | 作用 |
@@ -8,6 +8,7 @@
 | 0001 | `add-title-and-rebrand.patch` | HTML 加 `<title>zorr</title>`,loading 文案改 "zorr" |
 | 0002 | `client-ws-url-from-location.patch` | 客户端 WS URL 从 `window.location` 动态推导(不依赖编译时常量,镜像跨域名可移植) |
 | 0003 | `map-background-color.patch` | 地图底色 `0xff987d72`(棕) → `0xff2c8a3e`(绿) |
+| 0004 | `op-mode.patch` | **OP Mode**:升级快(/10)、HP×2、玩家伤害×3、怪伤害×0.5、掉率×5、密度×3、8 槽全开。8 个 multiplier 集中在新增的 `Shared/OpMode.hh`,Phase 2 admin 面板会改成运行时配置 |
 
 ## 应用方式
 

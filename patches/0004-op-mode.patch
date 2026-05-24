@@ -1,0 +1,139 @@
+diff --git a/Server/EntityFunctions/Damage.cc b/Server/EntityFunctions/Damage.cc
+index 83a85b9..51d1fa6 100644
+--- a/Server/EntityFunctions/Damage.cc
++++ b/Server/EntityFunctions/Damage.cc
+@@ -1,5 +1,6 @@
+ #include <Server/EntityFunctions.hh>
+ 
++#include <Shared/OpMode.hh>
+ #include <Server/Spawn.hh>
+ #include <Shared/Entity.hh>
+ #include <Shared/Simulation.hh>
+@@ -21,6 +22,16 @@ void inflict_damage(Simulation *sim, EntityID const atk_id, EntityID const def_i
+     if (!sim->ent_alive(def_id)) return;
+     Entity &defender = sim->get_ent(def_id);
+     if (!defender.has_component(kHealth)) return;
++    // zorr OpMode: scale damage by attacker/defender type
++    if (sim->ent_exists(atk_id)) {
++        Entity const &attacker_peek = sim->get_ent(atk_id);
++        bool a_petal  = attacker_peek.has_component(kPetal);
++        bool a_mob    = attacker_peek.has_component(kMob);
++        bool d_flower = defender.has_component(kFlower);
++        bool d_mob    = defender.has_component(kMob);
++        if (a_petal && d_mob)        amt *= OpMode::PETAL_DMG_MULT;
++        else if (a_mob && d_flower)  amt *= OpMode::MOB_DMG_MULT;
++    }
+     DEBUG_ONLY(assert(!defender.pending_delete);)
+     DEBUG_ONLY(assert(defender.has_component(kHealth));)
+     if (defender.immunity_ticks > 0) return;
+diff --git a/Server/EntityFunctions/Death.cc b/Server/EntityFunctions/Death.cc
+index 2037825..4d56fcb 100644
+--- a/Server/EntityFunctions/Death.cc
++++ b/Server/EntityFunctions/Death.cc
+@@ -1,5 +1,6 @@
+ #include <Server/EntityFunctions.hh>
+ 
++#include <Shared/OpMode.hh>
+ #include <Server/PetalTracker.hh>
+ #include <Server/Spawn.hh>
+ 
+@@ -43,7 +44,7 @@ static void _add_score(Simulation *sim, EntityID const killer_id, Entity const &
+     if (!sim->ent_exists(killer_id)) return;
+     Entity &killer = sim->get_ent(killer_id);
+     if (killer.has_component(kScore))
+-        killer.set_score(killer.get_score() + target.score_reward);
++        killer.set_score(killer.get_score() + (uint32_t)(target.score_reward * OpMode::XP_MULT));
+ }
+ 
+ void entity_on_death(Simulation *sim, Entity const &ent) {
+@@ -72,7 +73,7 @@ void entity_on_death(Simulation *sim, Entity const &ent) {
+             std::vector<PetalID::T> success_drops = {};
+             StaticArray<float, MAX_DROPS_PER_MOB> const &drop_chances = MOB_DROP_CHANCES[ent.get_mob_id()];
+             for (uint32_t i = 0; i < mob_data.drops.size(); ++i) 
+-                if (frand() < drop_chances[i]) success_drops.push_back(mob_data.drops[i]);
++                if (frand() < drop_chances[i] * OpMode::DROP_MULT) success_drops.push_back(mob_data.drops[i]);
+             _alloc_drops(sim, success_drops, ent.get_x(), ent.get_y());
+         }
+         if (ent.get_mob_id() == MobID::kAntHole && 
+diff --git a/Shared/Map.cc b/Shared/Map.cc
+index 324b022..2ed0b90 100644
+--- a/Shared/Map.cc
++++ b/Shared/Map.cc
+@@ -1,4 +1,5 @@
+ #include <Shared/Map.hh>
++#include <Shared/OpMode.hh>
+ 
+ #ifdef SERVERSIDE
+ #include <Server/Spawn.hh>
+@@ -43,7 +44,7 @@ void Map::remove_mob(Simulation *sim, uint32_t zone) {
+ void Map::spawn_random_mob(Simulation *sim, float x, float y) {
+     uint32_t zone_id = Map::get_zone_from_pos(x, y);
+     struct ZoneDefinition const &zone = MAP_DATA[zone_id];
+-    if (zone.density * (zone.right - zone.left) * (zone.bottom - zone.top) / (500 * 500) < sim->zone_mob_counts[zone_id]) return;
++    if (zone.density * OpMode::DENSITY_MULT * (zone.right - zone.left) * (zone.bottom - zone.top) / (500 * 500) < sim->zone_mob_counts[zone_id]) return;
+     float sum = 0;
+     for (SpawnChance const &s : zone.spawns)
+         sum += s.chance;
+diff --git a/Shared/OpMode.hh b/Shared/OpMode.hh
+new file mode 100644
+index 0000000..45beedb
+--- /dev/null
++++ b/Shared/OpMode.hh
+@@ -0,0 +1,20 @@
++#pragma once
++
++// zorr OP-Mode tunables — Phase 1: compile-time constants.
++// Phase 2 will replace these with values loaded from /etc/zorr/op-config.json.
++
++namespace OpMode {
++    // Leveling
++    inline constexpr float LEVEL_DIV = 10.0f;        // XP-to-next-level divided by this
++    inline constexpr float XP_MULT = 5.0f;           // XP awarded per kill * this
++    inline constexpr bool  ALL_SLOTS_FROM_START = true;
++
++    // Survivability
++    inline constexpr float HP_MULT = 2.0f;           // Flower HP * this
++    inline constexpr float PETAL_DMG_MULT = 3.0f;    // Petal-to-mob damage * this
++    inline constexpr float MOB_DMG_MULT = 0.5f;      // Mob-to-flower damage * this
++
++    // Economy
++    inline constexpr float DROP_MULT = 5.0f;         // Drop chance * this
++    inline constexpr float DENSITY_MULT = 3.0f;      // Mob density * this
++}
+diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
+index 4e2d3d3..c32d9d1 100644
+--- a/Shared/StaticData.cc
++++ b/Shared/StaticData.cc
+@@ -1,4 +1,5 @@
+ #include <Shared/StaticData.hh>
++#include <Shared/OpMode.hh>
+ 
+ #include <cmath>
+ 
+@@ -1098,7 +1099,9 @@ std::array<StaticArray<float, MAX_DROPS_PER_MOB>, MobID::kNumMobs> const MOB_DRO
+ }();
+ 
+ uint32_t score_to_pass_level(uint32_t level) {
+-    return (uint32_t)(pow(1.06, level - 1) * level) + 3;
++    uint32_t raw = (uint32_t)(pow(1.06, level - 1) * level) + 3;
++    uint32_t scaled = (uint32_t)(raw / OpMode::LEVEL_DIV);
++    return scaled < 1 ? 1 : scaled;
+ }
+ 
+ uint32_t score_to_level(uint32_t score) {
+@@ -1120,6 +1123,7 @@ uint32_t level_to_score(uint32_t level) {
+ }
+ 
+ uint32_t loadout_slots_at_level(uint32_t level) {
++    if (OpMode::ALL_SLOTS_FROM_START) return MAX_SLOT_COUNT;
+     if (level > MAX_LEVEL) level = MAX_LEVEL;
+     uint32_t ret = 5 + level / LEVELS_PER_EXTRA_SLOT;
+     if (ret > MAX_SLOT_COUNT) return MAX_SLOT_COUNT;
+@@ -1128,5 +1132,5 @@ uint32_t loadout_slots_at_level(uint32_t level) {
+ 
+ float hp_at_level(uint32_t level) {
+     if (level > MAX_LEVEL) level = MAX_LEVEL;
+-    return BASE_HEALTH + level;
++    return (BASE_HEALTH + level) * OpMode::HP_MULT;
+ }
+\ No newline at end of file
