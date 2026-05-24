@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>给 florr 玩家的接班手册 — zorr 家庭爽玩版</title>
+<style>
+:root{
+  --bg:#0a0a0a; --card:#131316; --bd:#26262c;
+  --fg:#ececec; --dim:#9a9aa3; --mute:#5e5e66;
+  --accent:#2c8a3e;        /* 跟 zorr 地图底色一致的绿 */
+  --accent2:#7fc18b;       /* 浅一档的高亮 */
+  --ok:#4ade80; --warn:#fbbf24; --err:#f87171;
+  --gold:#fbbf24;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--fg);
+  font-family:ui-sans-serif,system-ui,-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+  font-size:15px;line-height:1.65;-webkit-font-smoothing:antialiased}
+body{padding:48px 28px;max-width:920px;margin:auto}
+a{color:var(--accent2);text-decoration:none}
+a:hover{text-decoration:underline}
+strong{color:#fff}
+
+header{margin-bottom:36px}
+h1{font-size:28px;margin:0 0 6px;font-weight:700;letter-spacing:-.01em}
+h1 .emoji{font-size:24px}
+.sub{color:var(--dim);font-size:14px}
+.sub .gen{color:var(--mute);font-variant-numeric:tabular-nums}
+
+section{margin:32px 0}
+h2{font-size:18px;margin:0 0 16px;font-weight:600;color:var(--fg);
+  padding-bottom:8px;border-bottom:1px solid var(--bd);
+  scroll-margin-top:24px}
+h2 .num{color:var(--accent);font-weight:700;margin-right:8px;font-variant-numeric:tabular-nums}
+h2 a.anchor{color:var(--mute);font-weight:400;margin-left:8px;opacity:0;transition:opacity .1s}
+h2:hover a.anchor{opacity:1}
+h3{font-size:15px;margin:18px 0 8px;font-weight:600;color:var(--accent2)}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:8px}
+.kpi{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px 16px}
+.kpi .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.1}
+.kpi .l{font-size:12px;color:var(--dim);margin-top:4px}
+.kpi .vs{font-size:11px;color:var(--mute);margin-top:2px}
+.n.ok{color:var(--ok)} .n.warn{color:var(--warn)} .n.err{color:var(--err)} .n.gold{color:var(--gold)}
+
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:500;line-height:1.5;vertical-align:1px}
+.pill.ok{background:rgba(74,222,128,.15);color:var(--ok)}
+.pill.warn{background:rgba(251,191,36,.15);color:var(--warn)}
+.pill.err{background:rgba(248,113,113,.15);color:var(--err)}
+.pill.dim{background:rgba(255,255,255,.05);color:var(--dim)}
+.pill.gold{background:rgba(251,191,36,.15);color:var(--gold)}
+.pill.green{background:rgba(44,138,62,.18);color:var(--accent2)}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--bd);vertical-align:top}
+th{color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+td{font-variant-numeric:tabular-nums}
+tbody tr:hover{background:rgba(255,255,255,.02)}
+td.num{text-align:right}
+td.center{text-align:center}
+
+.chart{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:16px}
+.chart svg{display:block}
+.chart .legend{display:flex;gap:18px;margin-top:10px;font-size:11px;color:var(--dim)}
+.chart .legend .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+
+.callout{background:var(--card);border-left:3px solid var(--accent);padding:14px 18px;border-radius:6px;margin:14px 0}
+.callout.warn{border-left-color:var(--warn)}
+.callout.err{border-left-color:var(--err)}
+.callout.ok{border-left-color:var(--ok)}
+.callout.gold{border-left-color:var(--gold)}
+.callout p{margin:0}
+.callout p + p{margin-top:8px}
+
+details{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:10px 14px;margin:8px 0}
+summary{cursor:pointer;color:var(--accent2);font-size:13px;font-weight:500;user-select:none}
+summary:hover{color:var(--fg)}
+details[open] summary{margin-bottom:10px;color:var(--fg)}
+details pre{margin:0;font-size:12px;overflow-x:auto;color:var(--dim);line-height:1.5}
+
+code{font-family:ui-monospace,"SF Mono",Menlo,monospace;font-size:12.5px;
+  background:rgba(255,255,255,.06);padding:1px 6px;border-radius:3px;color:#fff}
+pre{background:var(--card);border:1px solid var(--bd);border-radius:8px;padding:14px;overflow-x:auto;font-size:12.5px;line-height:1.55}
+pre code{background:none;padding:0;color:var(--fg)}
+
+ul,ol{padding-left:22px;margin:8px 0}
+li{margin:3px 0}
+
+footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--bd);
+  color:var(--mute);font-size:11px;line-height:1.7}
+
+.recipe{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:18px;margin:14px 0}
+.recipe h3{margin-top:0}
+.recipe .meta{color:var(--dim);font-size:11px;margin-bottom:10px}
+.recipe .meta .pill{margin-right:6px}
+
+@media (max-width:640px){
+  body{padding:24px 16px;font-size:14px}
+  h1{font-size:22px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  table{font-size:12px}
+  th,td{padding:6px 8px}
+  pre{font-size:11px}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="emoji">🌼</span> 给 florr 玩家的接班手册</h1>
+  <div class="sub">
+    一份关于"开源免费 florr 私服" zorr 的设计书 — 跟氪金版的区别、为什么这么设计、怎么继续改下去。
+    写给跟你一样懂 florr 的同好。
+    <span class="gen"> · 生成于 <time id="gen">2026-05-24</time></span>
+  </div>
+</header>
+
+<!-- ============================================================ -->
+<section id="hi">
+  <h2><span class="num">0.</span>嗨,我们都是 florr 玩家 <a class="anchor" href="#hi">#</a></h2>
+
+  <div class="callout">
+    <p>这份文档是给你写的 — 一个 12 岁、对 florr 烂熟于心的玩家。我们假定你知道
+    <code>Mythic</code>、<code>Super</code>、<code>Pharaoh's Crown</code>、<code>Yggdrasil</code>、<code>Hel</code>、
+    <code>Mecha Spider</code> 这些名字是什么意思,不再赘述。</p>
+    <p>但有一些"幕后机制"你可能没刻意想过 — 为什么 florr 要把 Eternal 设计成 <code>0.1%</code> 概率?为什么
+    Unique 别人能"偷"?为什么 Hel 强制 PvP?这些都跟"怎么让你玩更久 / 花更多钱"有关。<strong>这份文档把这些拆开给你看</strong>,
+    然后告诉你我们做的 zorr 是怎么反着设计的。</p>
+    <p>最重要的是:zorr 是<strong>你的</strong>。你能改任何数值、任何机制、加新东西、删旧东西。文档最后教你怎么动手 — 你只需要会跟 AI 描述你要什么,AI 会帮你把代码写出来、推上线。</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="what-is-zorr">
+  <h2><span class="num">1.</span>三段话搞懂 zorr 是什么 <a class="anchor" href="#what-is-zorr">#</a></h2>
+
+  <p><strong>zorr</strong> 是基于一个叫 <code>gardn</code> 的开源 florr 复刻项目改的(GitHub: <code>trigonal-bacon/gardn</code>,AGPL-3.0 协议)。这个原始 gardn 是有人独立写了一遍 florr 早期版本的核心玩法,因为 florr 本身闭源,但游戏本身没法律保护它的"玩法",所以大家可以自由复刻。</p>
+
+  <p>我们(<code>zorr</code>)在 <code>gardn</code> 基础上加了几个"补丁"(就是改动文件),改了标题、改了 WebSocket 连接逻辑(让镜像能跨域名部署)、改了地图底色,并且加了一个<strong>"OP Mode"</strong>补丁 — 把所有数值都改成"爽快版":升级飞快、血厚、伤害高、掉率高、怪很多、所有装备槽一开局就开。</p>
+
+  <p>整个游戏跑在一台 VPS 上 (<code>https://zorr.inglegames.com</code>),进去就能玩。没有账号,没有付费,没有时间限制。代码完全公开在 <a href="https://github.com/kanekanefy/zorr">github.com/kanekanefy/zorr</a>。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="numbers">
+  <h2><span class="num">2.</span>数字对比:zorr 跟 florr 当前版差距 <a class="anchor" href="#numbers">#</a></h2>
+
+  <div class="kpis">
+    <div class="kpi"><div class="n">51</div><div class="l">花瓣种类</div><div class="vs">florr: 149</div></div>
+    <div class="kpi"><div class="n">24</div><div class="l">怪物种类</div><div class="vs">florr: 116</div></div>
+    <div class="kpi"><div class="n">4</div><div class="l">地图区域</div><div class="vs">florr: 9+ biomes</div></div>
+    <div class="kpi"><div class="n">8</div><div class="l">稀有度等级</div><div class="vs">florr: 10(+Unique +Eternal)</div></div>
+    <div class="kpi"><div class="n gold">0</div><div class="l">付费内容</div><div class="vs">florr: 商店/抽卡/通行证</div></div>
+    <div class="kpi"><div class="n ok">0</div><div class="l">广告</div><div class="vs">florr: 间歇性广告</div></div>
+  </div>
+
+  <h3 style="margin-top:24px;">花瓣 / 怪物 / 地图数量(可视化)</h3>
+  <div class="chart">
+    <svg viewBox="0 0 500 200" width="100%" preserveAspectRatio="none">
+      <!-- petals -->
+      <text x="0" y="14" fill="#9a9aa3" font-size="11">花瓣种类</text>
+      <rect x="0"   y="20" width="170" height="22" fill="#2c8a3e"/>
+      <text x="178" y="36" fill="#7fc18b" font-size="12">zorr: 51</text>
+      <rect x="0"   y="48" width="497" height="22" fill="#5e5e66"/>
+      <text x="178" y="64" fill="#9a9aa3" font-size="12">florr: 149</text>
+
+      <!-- mobs -->
+      <text x="0" y="92" fill="#9a9aa3" font-size="11">怪物种类</text>
+      <rect x="0"   y="98" width="103" height="22" fill="#2c8a3e"/>
+      <text x="111" y="114" fill="#7fc18b" font-size="12">zorr: 24</text>
+      <rect x="0"   y="126" width="497" height="22" fill="#5e5e66"/>
+      <text x="111" y="142" fill="#9a9aa3" font-size="12">florr: 116</text>
+
+      <!-- biomes -->
+      <text x="0" y="170" fill="#9a9aa3" font-size="11">地图区域</text>
+      <rect x="0"   y="176" width="55" height="14" fill="#2c8a3e"/>
+      <text x="63" y="188" fill="#7fc18b" font-size="12">zorr: 4 · florr: 9+</text>
+      <rect x="55" y="176" width="69" height="14" fill="#5e5e66"/>
+    </svg>
+    <div class="legend">
+      <span><span class="sw" style="background:#2c8a3e"></span>zorr(我们的)</span>
+      <span><span class="sw" style="background:#5e5e66"></span>florr(官方氪金版)</span>
+    </div>
+  </div>
+
+  <p style="margin-top:14px;color:var(--dim);font-size:13px;">
+    数量上 zorr 大概是 florr <strong>1/3 ~ 1/5</strong> 的体量。但因为我们的 OP Mode 让进度快 10 倍 + 掉率 5 倍 + 槽位全开,
+    <strong>"实际能体验到的内容"反而比 florr 多得多</strong>。florr 一个普通玩家几百小时可能只见过前 50 个花瓣,
+    zorr 你两小时就把 51 个见个遍。
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="full-compare">
+  <h2><span class="num">3.</span>完整功能对比 <a class="anchor" href="#full-compare">#</a></h2>
+
+  <table>
+    <thead>
+      <tr><th>功能</th><th>florr 当前</th><th>zorr 现在</th><th>我们要不要</th><th>理由</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>账号系统(Discord/Apple 登录)</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill err">不要</span></td>
+        <td>私服没必要。开局就玩,关页面就走。也避免账号锁定 / 防作弊那些麻烦</td>
+      </tr>
+      <tr>
+        <td>Crafting(同级 5 个 → 上一级)</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill err">不要</span></td>
+        <td>这是 florr 的"赌博引擎",故意把成功率做得很低让你 grinding。OP Mode 直接给你高级 petal 不更爽?</td>
+      </tr>
+      <tr>
+        <td>Forging Unique(5 Super → Unique + 别人能偷)</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill err">不要</span></td>
+        <td>"偷"机制是 florr 故意制造的社交焦虑,逼你上线护资产。家庭服里你跟弟弟玩,谁偷谁?</td>
+      </tr>
+      <tr>
+        <td>Hel 区域(强制 PvP)</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill warn">看你</span></td>
+        <td>家人之间 PvP 也许好玩。可以做成可选 zone,不强制</td>
+      </tr>
+      <tr>
+        <td>Squads(组队)</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill ok">强烈要</span></td>
+        <td>家人一起打 boss 才是爽点!gardn 底层有 <code>team</code> 字段,加 UI 不算太难</td>
+      </tr>
+      <tr>
+        <td>Factory dungeon / Assembler boss</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill warn">要</span></td>
+        <td>带 boss 战的副本很好玩。可以仿 Factory 加一个,数值大幅放水</td>
+      </tr>
+      <tr>
+        <td>9+ biomes(Desert/Ocean/Sewers/Jungle/...)</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill warn">仅 4</span></td>
+        <td><span class="pill ok">要</span></td>
+        <td>新 biome 不用新 mob 也行 — 用现有 mob 不同组合 + 不同颜色就能创造新区。<strong>这是最高 ROI 的加法</strong></td>
+      </tr>
+      <tr>
+        <td>Mythic / Ultra / Super / Unique / Eternal</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill warn">部分</span></td>
+        <td><span class="pill warn">可选</span></td>
+        <td>视觉上有"高稀有度光环"挺爽,但 zorr 你直接全送给玩家,稀有度只是颜色装饰</td>
+      </tr>
+      <tr>
+        <td>10000+ 在线 / 全球排行榜</td>
+        <td><span class="pill ok">有</span></td>
+        <td><span class="pill dim">无(本地排行)</span></td>
+        <td><span class="pill err">不要</span></td>
+        <td>家庭服就 2-3 人。全球排行只会让你永远第 99999 名</td>
+      </tr>
+      <tr>
+        <td>Bot 玩家(假人陪玩)</td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill dim">无</span></td>
+        <td><span class="pill ok">很想要</span></td>
+        <td>一个人玩 zorr 时世界感觉太空。bot 飞来飞去打怪让世界感觉热闹</td>
+      </tr>
+      <tr>
+        <td>装备槽数量(MAX_SLOT_COUNT)</td>
+        <td>8 主 + 8 备</td>
+        <td>8 主 + 8 备 <strong>(开局全开)</strong></td>
+        <td><span class="pill ok">保留</span></td>
+        <td>OP Mode 已经让你不用攒到 99 级才解锁槽位</td>
+      </tr>
+      <tr>
+        <td>动画/特效精美度</td>
+        <td><span class="pill ok">华丽</span></td>
+        <td><span class="pill warn">简洁</span></td>
+        <td><span class="pill dim">不重要</span></td>
+        <td>gardn 用 Canvas2D + 矢量绘制,够看就行。这不影响玩法</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ============================================================ -->
+<section id="grind-engine">
+  <h2><span class="num">4.</span>florr 的"氪金引擎"是怎么吃你时间的 <a class="anchor" href="#grind-engine">#</a></h2>
+
+  <p>这一节给你看 florr 设计师的"小心机"。理解这些 = 理解我们 zorr 为什么是反着做的。</p>
+
+  <h3>4.1 Crafting 的概率瀑布</h3>
+  <p>从 Common 升到 Eternal,每一级单次成功率减半,最后一档 <code>Super → Eternal</code> 是 <strong>0.1%</strong>。</p>
+
+  <div class="chart">
+    <svg viewBox="0 0 560 200" width="100%" preserveAspectRatio="none">
+      <!-- success rate bars (log scale visualization) -->
+      <g font-size="10" fill="#9a9aa3">
+        <text x="0" y="14">单次成功率</text>
+      </g>
+      <!-- bars (width log-scaled) -->
+      <g>
+        <rect x="0" y="24" width="320" height="14" fill="#7fc18b"/><text x="328" y="35" font-size="11" fill="#fff">Common→Unusual  64%</text>
+        <rect x="0" y="42" width="160" height="14" fill="#7fc18b"/><text x="168" y="53" font-size="11" fill="#fff">Unusual→Rare  32%</text>
+        <rect x="0" y="60" width="80"  height="14" fill="#fbbf24"/><text x="88"  y="71" font-size="11" fill="#fff">Rare→Epic  16%</text>
+        <rect x="0" y="78" width="40"  height="14" fill="#fbbf24"/><text x="48"  y="89" font-size="11" fill="#fff">Epic→Legendary  8%</text>
+        <rect x="0" y="96" width="20"  height="14" fill="#fb923c"/><text x="28"  y="107" font-size="11" fill="#fff">Legendary→Mythic  4%</text>
+        <rect x="0" y="114" width="10" height="14" fill="#fb923c"/><text x="18"  y="125" font-size="11" fill="#fff">Mythic→Ultra  2%</text>
+        <rect x="0" y="132" width="5"  height="14" fill="#f87171"/><text x="13"  y="143" font-size="11" fill="#fff">Ultra→Super  1%</text>
+        <rect x="0" y="150" width="2"  height="14" fill="#f87171"/><text x="10"  y="161" font-size="11" fill="#fff">Super→Eternal  <tspan fill="#f87171" font-weight="bold">0.1%</tspan></text>
+      </g>
+      <!-- subtitle -->
+      <text x="0" y="190" font-size="10" fill="#5e5e66">为了视觉清晰,横向是线性比例(不是对数)。底两档已经几乎看不见 = 几乎不可能。</text>
+    </svg>
+  </div>
+
+  <p>算一下:平均要凑齐多少基础(Common)花瓣才能合成出最高的 Eternal?</p>
+
+  <table>
+    <thead><tr><th>稀有度</th><th class="num">平均所需 Common</th><th>体感</th></tr></thead>
+    <tbody>
+      <tr><td>Unusual</td><td class="num">6</td><td>一会儿就有</td></tr>
+      <tr><td>Rare</td><td class="num">66</td><td>玩两小时</td></tr>
+      <tr><td>Epic</td><td class="num">1,200</td><td>玩一周</td></tr>
+      <tr><td>Legendary</td><td class="num">40,500</td><td>玩一个月</td></tr>
+      <tr><td>Mythic</td><td class="num">2,600,000</td><td>玩几年</td></tr>
+      <tr><td>Ultra</td><td class="num">340,000,000</td><td><span class="pill warn">"基本不可能"</span></td></tr>
+      <tr><td>Super</td><td class="num">88,000,000,000</td><td><span class="pill err">人生不够长</span></td></tr>
+      <tr><td>Eternal</td><td class="num">220,000,000,000,000</td><td><span class="pill err">220 万亿</span></td></tr>
+    </tbody>
+  </table>
+
+  <p style="color:var(--dim);">数字是概率倒数累乘 — 不靠氪金/挂机/抱大腿,普通玩家这辈子也合成不出 Super 以上。所以 florr 商店里能买现成的高稀有度 petal,这才是它的真正商业模式。</p>
+
+  <h3>4.2 Unique 偷取机制</h3>
+  <div class="callout warn">
+    <p>你花了大量时间凑出一个 Unique 的 Pharaoh's Crown。结果另一个玩家在某个服务器上 forge 出同样的 Unique,
+    系统就把你的某个 Super 消掉。你被"偷"了,而且全球范围内任何人都可能触发,你没法防御。</p>
+    <p>从游戏设计角度,这是<strong>制造稀缺 + 社交焦虑</strong> — 让你不得不上线、不得不持续 grinding 才能"守住"装备。
+    这是 mobile 手游"PVP 排行 + 资源限时"的同一套话术。</p>
+  </div>
+
+  <h3>4.3 Hel 强制 PvP</h3>
+  <p>Hel 是 florr 唯一强制 PvP 的区域。设计目的:让你时刻警觉,**永远没有"安心练级"的环境**。也是制造焦虑的工具。</p>
+  <p>对家庭服来说<strong>有趣的部分</strong>是"家人之间互打"可以是娱乐 — 但 florr 那种"陌生人随时来宰你"完全没意义。</p>
+</section>
+
+<!-- ============================================================ -->
+<section id="three-rules">
+  <h2><span class="num">5.</span>爽玩版三原则 <a class="anchor" href="#three-rules">#</a></h2>
+
+  <div class="callout ok">
+    <p><strong>原则 1:爽 over 磨</strong>。任何"为了让玩家玩更久"的设计 — crafting 概率、forging 稀缺、长 cooldown — 我们都反着做。OP 模式 = 默认开启。</p>
+  </div>
+
+  <div class="callout ok">
+    <p><strong>原则 2:多样 over 稀缺</strong>。"难得一见的 boss"不爽,"满地都是 boss"才爽。"100 个 petal 99 个见不到"是 florr 的问题,我们 51 个全送给你,你想试哪个试哪个。</p>
+  </div>
+
+  <div class="callout ok">
+    <p><strong>原则 3:本地 over 全球</strong>。家庭服 2-3 个人玩,排行榜上不需要 10 万人。leaderboard 只显示你和家人就够。所有"全球同服"的设计(crafting 全球通知、forge 偷取、世界排名)对我们都是噪音。</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="menu">
+  <h2><span class="num">6.</span>可以改的东西清单(按 ROI 排序) <a class="anchor" href="#menu">#</a></h2>
+
+  <table>
+    <thead>
+      <tr><th>编号</th><th>想做的事</th><th class="center">爽感</th><th class="center">工作量</th><th>哪种修改</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>A</td>
+        <td>调 OP 倍率(升级速度/血量/伤害/掉率/密度)</td>
+        <td class="center"><span class="pill ok">★★★</span></td>
+        <td class="center"><span class="pill green">小</span></td>
+        <td>改 <code>Shared/OpMode.hh</code> 一个文件里的数字</td>
+      </tr>
+      <tr>
+        <td>B</td>
+        <td>加几个全新 zone(boss 巢 / square 农场 / 无尽 easy)</td>
+        <td class="center"><span class="pill ok">★★★★</span></td>
+        <td class="center"><span class="pill green">小</span></td>
+        <td>改 <code>Shared/StaticData.hh</code> 的 <code>MAP_DATA</code> 数组,加几行 zone 定义</td>
+      </tr>
+      <tr>
+        <td>C</td>
+        <td>改某只 mob 的血量/伤害/XP 奖励</td>
+        <td class="center"><span class="pill ok">★★</span></td>
+        <td class="center"><span class="pill green">小</span></td>
+        <td>改 <code>Shared/StaticData.cc</code> 里 <code>MOB_DATA</code> 那个大表里对应的几行</td>
+      </tr>
+      <tr>
+        <td>D</td>
+        <td>改某个 petal 的属性(伤害/装填/数量/特效)</td>
+        <td class="center"><span class="pill ok">★★</span></td>
+        <td class="center"><span class="pill green">小</span></td>
+        <td>改 <code>Shared/StaticData.cc</code> 里 <code>PETAL_DATA</code> 表里对应几行</td>
+      </tr>
+      <tr>
+        <td>E</td>
+        <td>给地图换主题色(草地→雪原→沙漠)</td>
+        <td class="center"><span class="pill warn">★</span></td>
+        <td class="center"><span class="pill green">小</span></td>
+        <td>改 <code>Client/Rendering.cc</code> 一个颜色常量(我们已经有 patch 0003 把棕色改成绿色,可以再加一个)</td>
+      </tr>
+      <tr>
+        <td>F</td>
+        <td>等级缩放怪物(同样的 ladybug 在高等级区是 boss 级)</td>
+        <td class="center"><span class="pill ok">★★★</span></td>
+        <td class="center"><span class="pill warn">中</span></td>
+        <td>在 mob spawn 时,根据它所在的 zone difficulty 把基础数值 ×N。加 1-2 个 OpMode 常量 + spawn 逻辑改 5 行</td>
+      </tr>
+      <tr>
+        <td>G</td>
+        <td>Bot 陪玩(假人玩家)</td>
+        <td class="center"><span class="pill ok">★★★★</span></td>
+        <td class="center"><span class="pill warn">中</span></td>
+        <td>服务端加一个 AI 控制的 flower 实体,简单 FSM(漫游/打怪/死了重生)。客户端零改</td>
+      </tr>
+      <tr>
+        <td>H</td>
+        <td>Squads(组队)</td>
+        <td class="center"><span class="pill ok">★★★★</span></td>
+        <td class="center"><span class="pill warn">中</span></td>
+        <td>gardn 底层有 <code>Relations.team</code> 字段,加创建队伍 UI + 队友友军判定</td>
+      </tr>
+      <tr>
+        <td>I</td>
+        <td>加新 mob 类型(全新形状)</td>
+        <td class="center"><span class="pill ok">★★★</span></td>
+        <td class="center"><span class="pill err">大</span></td>
+        <td>加 <code>MobID</code> enum + <code>MOB_DATA</code> 项 + <code>RenderMob.cc</code> 加渲染 case + AI 行为</td>
+      </tr>
+      <tr>
+        <td>J</td>
+        <td>Admin 滑块面板(网页拖滑块改 OpMode 不用 git)</td>
+        <td class="center"><span class="pill warn">★★</span></td>
+        <td class="center"><span class="pill err">大</span></td>
+        <td>独立 Next.js 项目,改 zorr 让 OpMode 从挂载的 JSON 文件读</td>
+      </tr>
+      <tr>
+        <td>K</td>
+        <td>boss event(像 Factory Assembler 那种大场面)</td>
+        <td class="center"><span class="pill ok">★★★★</span></td>
+        <td class="center"><span class="pill err">大</span></td>
+        <td>新 mob 类型(I) + 触发逻辑 + 客户端特效</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p style="margin-top:14px;color:var(--dim);font-size:13px;">
+    <strong>建议顺序</strong>:A(几分钟出效果) → C/D(调你最不喜欢的几个 mob/petal) → B(新 zone) → F(等级缩放) →
+    G 或 H(选一个先做) → I/J/K 看哪个最想要。
+  </p>
+</section>
+
+<!-- ============================================================ -->
+<section id="workflow">
+  <h2><span class="num">7.</span>怎么实际改一个东西(完整流程) <a class="anchor" href="#workflow">#</a></h2>
+
+  <p>下面是从"我想改个数值"到"线上看到效果"的完整路径,大约 5-10 分钟。</p>
+
+  <ol>
+    <li>找到要改的地方(下面"配方书"一节有具体位置表)</li>
+    <li>跟 AI 描述你想改什么(直接说人话:"我想让 Easy 区的 ladybug 血量翻倍")</li>
+    <li>AI 帮你写一个新的 <code>patch</code> 文件,放进 <code>patches/</code> 目录</li>
+    <li>把改动 commit + push 到 GitHub(<code>git push origin main</code>)</li>
+    <li>GitHub Actions 自动 build 新版游戏(~3-5 分钟)</li>
+    <li>新镜像自动推到 Dokploy,Dokploy 自动重启服务器(~30 秒)</li>
+    <li>浏览器刷新 <code>https://zorr.inglegames.com</code>,你的改动生效</li>
+  </ol>
+
+  <h3>关键概念:为什么用"补丁"而不直接改源码</h3>
+  <div class="callout">
+    <p>原始 <code>gardn</code> 项目在 <code>upstream/gardn/</code> 目录,我们当 git submodule 锁死不动。</p>
+    <p>我们的所有改动都写成<strong>补丁文件</strong>(<code>patches/0004-op-mode.patch</code> 这种),
+    放在 <code>patches/</code> 目录。Dockerfile 在 build 时按文件名顺序自动应用。</p>
+    <p><strong>好处</strong>:gardn 上游升级时,我们的"自己写的部分"和"上游的部分"一目了然。
+    rebase 时知道哪些是我们的内容,不会冲突或丢失。</p>
+  </div>
+
+  <h3>项目结构速查</h3>
+  <pre><code>zorr/
+├── upstream/gardn/          # 原始 gardn 代码(锁死,不动)
+│   ├── Shared/
+│   │   ├── OpMode.hh        # 我们加的 — 所有"难度"常量
+│   │   ├── StaticData.cc    # mob/petal 数据表都在这
+│   │   ├── StaticData.hh    # 地图 MAP_DATA 在这
+│   │   └── StaticDefinitions.hh  # MobID/PetalID 枚举
+│   ├── Server/              # 服务端逻辑
+│   │   ├── EntityFunctions/
+│   │   │   ├── Damage.cc    # 伤害应用
+│   │   │   ├── Death.cc     # 死亡 + 掉落 + XP 给予
+│   │   │   └── ...
+│   │   └── Process/Ai.cc    # mob AI
+│   └── Client/              # 客户端(WASM)
+│       ├── Rendering.cc     # 地图背景渲染
+│       └── Render/          # 实体渲染
+├── patches/                 # 我们写的所有补丁(★ 改东西就改这里 ★)
+│   ├── 0001-add-title-and-rebrand.patch
+│   ├── 0002-client-ws-url-from-location.patch
+│   ├── 0003-map-background-color.patch
+│   └── 0004-op-mode.patch                ← 现在最重要的那个
+├── Dockerfile               # build 配置
+├── docker-compose.yml       # 本地跑用
+├── .github/workflows/       # GitHub 自动 build
+└── deploy/                  # Dokploy 部署脚本</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<section id="recipes">
+  <h2><span class="num">8.</span>改变配方书 — 跟着抄就行 <a class="anchor" href="#recipes">#</a></h2>
+
+  <!-- Recipe 1 -->
+  <div class="recipe">
+    <h3>配方 1 · 调 OP 倍率(最简单)</h3>
+    <div class="meta">
+      <span class="pill green">小</span>
+      <span class="pill ok">立竿见影</span>
+      涉及 1 个文件
+    </div>
+    <p><strong>目标</strong>:让升级更快、或更慢、或让伤害更高。</p>
+    <p><strong>动哪</strong>:<code>patches/0004-op-mode.patch</code> 里的 <code>Shared/OpMode.hh</code> 部分。</p>
+    <p>当前默认值:</p>
+    <pre><code>LEVEL_DIV = 10.0f      // 升级 XP / 10 (越大升级越快)
+XP_MULT = 5.0f         // 每杀给 XP × 5
+HP_MULT = 2.0f         // 玩家血 × 2
+PETAL_DMG_MULT = 3.0f  // 打怪伤害 × 3
+MOB_DMG_MULT = 0.5f    // 怪打你伤害 × 0.5
+DROP_MULT = 5.0f       // 掉率 × 5
+DENSITY_MULT = 3.0f    // 怪密度 × 3
+ALL_SLOTS_FROM_START = true  // 8 槽全开</code></pre>
+    <p><strong>给 AI 说什么</strong>(直接复制改改):</p>
+    <pre><code>"修改 patches/0004-op-mode.patch,把 OpMode 里的:
+  - LEVEL_DIV 改成 50(升级再快 5 倍)
+  - PETAL_DMG_MULT 改成 10(无脑碾压 mode)
+  - DENSITY_MULT 改成 5(更多怪)
+然后 push 上线"</code></pre>
+    <p>AI 会帮你算好新的 patch、commit、push。等 5 分钟就生效。</p>
+  </div>
+
+  <!-- Recipe 2 -->
+  <div class="recipe">
+    <h3>配方 2 · 加一个全新 zone(纯数据扩展,没代码逻辑)</h3>
+    <div class="meta">
+      <span class="pill green">小</span>
+      <span class="pill ok">★★★★ 爽</span>
+      涉及 1 个文件
+    </div>
+    <p><strong>目标</strong>:在地图上加一块新区域,比如"Square 农场"— 几乎只刷稀有的 kSquare,
+    数量极少但每只给 10000 XP,孩子打到一只兴奋一晚。</p>
+    <p><strong>动哪</strong>:<code>Shared/StaticData.hh</code> 的 <code>MAP_DATA</code> 数组。
+    现在的 4 个 zone 长这样:</p>
+    <pre><code>inline std::array const MAP_DATA = std::to_array&lt;struct ZoneDefinition&gt;({
+    { .left=0,     .top=0, .right=10000, .bottom=4000,
+      .density=1, .drop_multiplier=0.3,
+      .spawns = {
+        { MobID::kRock, 500000 },
+        { MobID::kLadybug, 100000 },
+        ...
+      },
+      .difficulty=0, .color=0xff1ea761, .name="Easy" },
+    ...
+});</code></pre>
+    <p><strong>加一个新 zone</strong> 长这样:</p>
+    <pre><code>{ .left=40000, .top=0, .right=50000, .bottom=4000,
+  .density=0.05,            // 很稀疏,每只都是宝
+  .drop_multiplier=2.0,     // 掉率也高
+  .spawns = {
+    { MobID::kSquare, 1000 },        // 几乎全是 Square
+    { MobID::kMassiveLadybug, 10 },  // 偶尔一只巨型
+  },
+  .difficulty=3,
+  .color=0xff8a2c5e,         // 紫红色,显眼
+  .name="Square Farm" },</code></pre>
+    <p>注意:加 zone 后,<code>ARENA_WIDTH</code>(在 <code>StaticDefinitions.hh</code>)也要相应扩大到 50000。
+    AI 会帮你处理这个连带改动。</p>
+    <p><strong>给 AI 说</strong>:</p>
+    <pre><code>"在 zorr 里加一个新 zone 叫 'Square Farm':
+  - 在地图最右边(x 40000-50000)
+  - 几乎只刷 kSquare(权重 1000),偶尔 kMassiveLadybug(权重 10)
+  - 密度 0.05(很稀疏)
+  - 掉率乘数 2.0
+  - 难度 3
+  - 颜色紫红色(0xff8a2c5e)
+帮我生成补丁文件 patches/0005-square-farm-zone.patch,
+注意 ARENA_WIDTH 也要从 40000 扩到 50000"</code></pre>
+  </div>
+
+  <!-- Recipe 3 -->
+  <div class="recipe">
+    <h3>配方 3 · 改某只 mob 的数值</h3>
+    <div class="meta">
+      <span class="pill green">小</span>
+      涉及 1 个文件
+    </div>
+    <p><strong>目标</strong>:比如让 Hornet 变得没那么吓人,血量减半、伤害降到 1/3。</p>
+    <p><strong>动哪</strong>:<code>Shared/StaticData.cc</code> 里的 <code>MOB_DATA</code> 数组,每只 mob 长这样:</p>
+    <pre><code>{
+  .name = "Hornet",
+  .description = "...",
+  .rarity = RarityID::kRare,
+  .health = { ... },     // 血量(可能是范围)
+  .damage = ...,         // 撞击伤害
+  .radius = { ... },     // 体型
+  .xp = ...,             // 给的 XP 奖励
+  .drops = { ... },      // 死后掉什么 petal
+  .attributes = { ... }, // AI 行为
+},</code></pre>
+    <p><strong>给 AI 说</strong>:</p>
+    <pre><code>"修改 MOB_DATA 里 Hornet 的 .health 改成原来一半,.damage 改成原来 1/3,
+其他不变。生成 patch 文件 patches/0005-nerf-hornet.patch"</code></pre>
+  </div>
+
+  <!-- Recipe 4 -->
+  <div class="recipe">
+    <h3>配方 4 · 改某个 petal 的数值</h3>
+    <div class="meta">
+      <span class="pill green">小</span>
+      涉及 1 个文件
+    </div>
+    <p><strong>目标</strong>:比如把 Basic petal 改成超强,让"什么都没装备"也能玩。</p>
+    <p><strong>动哪</strong>:同样 <code>Shared/StaticData.cc</code> 里的 <code>PETAL_DATA</code> 数组,
+    Basic 是第 2 个(<code>kNone</code> 之后):</p>
+    <pre><code>{
+  .name = "Basic",
+  .description = "A nice petal, not too strong but not too weak",
+  .health = 10.0,
+  .damage = 10.0,
+  .radius = 10.0,
+  .reload = 2.5,
+  .count = 1,
+  .rarity = RarityID::kCommon,
+  .attributes = {}
+},</code></pre>
+    <p><strong>给 AI 说</strong>:</p>
+    <pre><code>"修改 PETAL_DATA 里 Basic 的 damage 改成 100,reload 改成 0.5(超快),
+count 改成 3(一次出 3 朵)。新 patch 文件 patches/0005-buff-basic.patch"</code></pre>
+  </div>
+
+  <!-- Recipe 5 -->
+  <div class="recipe">
+    <h3>配方 5 · 万能 prompt 模板(跟 AI 协作的标准句式)</h3>
+    <div class="meta">
+      <span class="pill gold">必读</span>
+      跟任何配方搭配
+    </div>
+    <p>跟 AI(像 Claude Code 或 ChatGPT)协作时,这个模板能减少 90% 误解:</p>
+    <pre><code>背景:我在维护一个开源 florr 私服叫 zorr,代码在 github.com/kanekanefy/zorr
+原始游戏代码在 upstream/gardn/ 目录(submodule,不改动)
+我们的所有自定义都通过 patches/NNNN-*.patch 文件实现
+
+我想做的改动:[这里描述你想要的效果,用人话]
+
+请帮我:
+1. 在 upstream/gardn/ 里实际修改文件实现这个效果
+2. 用 git diff 生成新的 patch 文件保存到 patches/NNNN-描述.patch
+3. 用 git checkout . 还原 upstream/gardn 的工作树
+4. 提醒我跑 git add patches/ && git commit && git push 上线
+
+注意:文件改完一定要 git diff 生成 patch 再还原 — 不要直接 commit upstream/gardn 的改动</code></pre>
+    <p><strong>为什么这个模板重要</strong>:gardn 是 submodule(从外部仓库引入的),我们不能直接 commit 它的改动 — 否则会污染上游引用。所有改动必须以 patch 形式落到我们自己的仓库里。这个模板把这个规则讲清楚了。</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="dont-do">
+  <h2><span class="num">9.</span>千万不要做这些事(踩坑警告) <a class="anchor" href="#dont-do">#</a></h2>
+
+  <div class="callout err">
+    <p><strong>❌ 不要做 crafting 系统</strong>。它是 florr 的赌博引擎,故意把成功率压到 0.1%。家庭服里你直接给玩家高级 petal 就行,何苦让他们摇 5000 次?</p>
+  </div>
+
+  <div class="callout err">
+    <p><strong>❌ 不要做 Unique 偷取</strong>。这是 florr 用来制造社交焦虑的机制。家人之间互偷只会闹翻。</p>
+  </div>
+
+  <div class="callout err">
+    <p><strong>❌ 不要做账号 + 持久化收藏</strong>。私服上线下线频繁,改了数值要重启,搞账号反而麻烦。每局新鲜开始才爽。</p>
+  </div>
+
+  <div class="callout err">
+    <p><strong>❌ 不要做"防作弊"</strong>。私服你<strong>就是</strong>那个"作弊的人"。OP Mode 就是合法作弊。
+    任何反作弊代码都是浪费精力。</p>
+  </div>
+
+  <div class="callout err">
+    <p><strong>❌ 不要直接在 upstream/gardn/ 里 commit 修改</strong>。
+    所有改动通过 <code>patches/</code> 走。如果你不小心 commit 了 submodule 内容,
+    git pull 时会冲突,而且改动对上游不可见,反而难维护。</p>
+  </div>
+
+  <div class="callout warn">
+    <p><strong>⚠️ 改 ARENA_WIDTH / ARENA_HEIGHT 要小心</strong>。
+    扩大地图后所有 zone 的边界要重算,不然玩家会跑到"虚空"区。
+    用 AI 协作时让它检查 MAP_DATA 的所有 .right / .bottom 都在新边界内。</p>
+  </div>
+
+  <div class="callout warn">
+    <p><strong>⚠️ 加新 MobID 比想象的工作量大</strong>。
+    需要同时改 enum、MOB_DATA、MOB_DROP_CHANCES、RenderMob 渲染、可能还有 AI 行为。
+    "加 1 个新 mob" 不如"加 10 个新 zone 用现有 mob 新组合"省力。</p>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<section id="checklist">
+  <h2><span class="num">10.</span>快速开始 checklist <a class="anchor" href="#checklist">#</a></h2>
+
+  <ol>
+    <li>玩一晚上现在的 <code>https://zorr.inglegames.com</code>,记下"哪些 mob 想强化/削弱"、"哪些 petal 觉得没用想砍"</li>
+    <li>用配方 1 的模板,让 AI 帮你调一波 OpMode 倍率(几小时就能上线一版)</li>
+    <li>用配方 3/4 调几个具体 mob/petal 的数值(每天可以推 1-2 版)</li>
+    <li>玩腻了 → 用配方 2 加一个新 zone(每周可以加 1-2 个)</li>
+    <li>想要队伍玩法 → 跟 AI 说"按 spec 里 Phase 3 的描述,实现 Squads 功能"</li>
+    <li>想要 bot 玩家陪你 → 跟 AI 说"按 spec 里 Phase 3,实现简单 bot 玩家"</li>
+  </ol>
+
+  <h3>关键文件链接</h3>
+  <ul>
+    <li>GitHub 仓库:<code>github.com/kanekanefy/zorr</code></li>
+    <li>线上游戏:<code>https://zorr.inglegames.com</code></li>
+    <li>OP Mode 设定:<code>patches/0004-op-mode.patch</code>(里面的 <code>OpMode.hh</code> 段)</li>
+    <li>所有 mob 数据:<code>upstream/gardn/Shared/StaticData.cc</code> 找 <code>MOB_DATA</code></li>
+    <li>所有 petal 数据:同上,找 <code>PETAL_DATA</code></li>
+    <li>地图 zone 定义:<code>upstream/gardn/Shared/StaticData.hh</code> 找 <code>MAP_DATA</code></li>
+    <li>三阶段未来规划 spec:<code>docs/superpowers/specs/2026-05-24-zorr-game-progression-and-admin-design.md</code></li>
+  </ul>
+</section>
+
+<!-- ============================================================ -->
+<section id="appendix">
+  <h2><span class="num">11.</span>附录:常见英文术语对照 <a class="anchor" href="#appendix">#</a></h2>
+
+  <details open>
+    <summary>florr / 代码里的英文术语,怕你看代码看不懂</summary>
+    <table style="margin-top:10px">
+      <thead><tr><th>英文</th><th>中文 / 解释</th></tr></thead>
+      <tbody>
+        <tr><td><code>petal</code></td><td>花瓣(你装备的东西)</td></tr>
+        <tr><td><code>flower</code></td><td>花朵(玩家本体)</td></tr>
+        <tr><td><code>mob</code></td><td>怪物(NPC)</td></tr>
+        <tr><td><code>zone</code></td><td>区域(地图的一块)</td></tr>
+        <tr><td><code>biome</code></td><td>生态(一组相关 zone,比如"沙漠 biome")</td></tr>
+        <tr><td><code>spawn</code></td><td>刷出来 / 生成</td></tr>
+        <tr><td><code>drop</code></td><td>掉落(mob 死后留下的 petal)</td></tr>
+        <tr><td><code>loadout</code></td><td>装备配置</td></tr>
+        <tr><td><code>FOV</code></td><td>field of view = 视野范围(级别越高视野越大)</td></tr>
+        <tr><td><code>TPS</code></td><td>ticks per second = 每秒服务器更新次数,gardn 是 20</td></tr>
+        <tr><td><code>tick</code></td><td>服务器更新一次的事件</td></tr>
+        <tr><td><code>rarity</code></td><td>稀有度</td></tr>
+        <tr><td><code>poison</code></td><td>毒(持续伤害)</td></tr>
+        <tr><td><code>aggro</code></td><td>仇恨范围(mob 多远会主动攻击你)</td></tr>
+        <tr><td><code>reload</code></td><td>装填时间(petal 用掉后多久重生)</td></tr>
+        <tr><td><code>radius</code></td><td>半径 / 体型大小</td></tr>
+        <tr><td><code>WASM</code></td><td>WebAssembly,C++ 编译后能在浏览器跑的格式</td></tr>
+        <tr><td><code>WebSocket</code> / WS</td><td>浏览器跟服务器的实时双向连接(游戏通信用的)</td></tr>
+        <tr><td><code>patch</code></td><td>补丁文件(我们的所有自定义改动)</td></tr>
+        <tr><td><code>commit</code></td><td>把改动记一次账(git 的基本单位)</td></tr>
+        <tr><td><code>push</code></td><td>把本地的 commit 推到 GitHub(远程仓库)</td></tr>
+        <tr><td><code>GHA</code> / GitHub Actions</td><td>GitHub 的自动化系统(push 后帮你 build)</td></tr>
+        <tr><td><code>GHCR</code></td><td>GitHub Container Registry(build 完的镜像存这)</td></tr>
+        <tr><td><code>Dokploy</code></td><td>我们用的部署平台(管理 Docker 容器)</td></tr>
+        <tr><td><code>VPS</code></td><td>Virtual Private Server = 一台云服务器</td></tr>
+      </tbody>
+    </table>
+  </details>
+</section>
+
+<!-- ============================================================ -->
+<section id="end">
+  <h2><span class="num">12.</span>最后 <a class="anchor" href="#end">#</a></h2>
+
+  <div class="callout gold">
+    <p>zorr 是<strong>你的玩具</strong>。任何不爽的数值、任何想加的功能 — 跟 AI 说一声,5 分钟后就能上线。</p>
+    <p>这种"我说什么就改什么"的体验,在 florr 这种闭源游戏里你<strong>永远</strong>得不到。
+    你只能等官方更新、接受官方设计、为官方花钱。</p>
+    <p>而开源 + AI 协作把这层翻过来 — 你成了游戏的设计师,AI 是你的程序员。</p>
+    <p>祝玩得开心 🌼</p>
+  </div>
+</section>
+
+<footer>
+  本文档保存在 zorr 项目仓库:<code>docs/handoff-for-florr-players.html</code><br>
+  单文件 HTML,可以离线查看、邮件发送、保存到任何地方。<br>
+  如果你想读这份文档的最新版,去 <code>github.com/kanekanefy/zorr</code> 看 main 分支。<br>
+  生成于 2026-05-24,基于 gardn commit <code>86fcec6</code>。
+</footer>
+
+<script>
+document.getElementById('gen').textContent =
+  new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Shanghai' }).replace('T', ' ').slice(0, 10);
+</script>
+
+</body>
+</html>
