@@ -1,0 +1,141 @@
+diff --git a/Client/Game.cc b/Client/Game.cc
+index 840c09a..c38dbe3 100644
+--- a/Client/Game.cc
++++ b/Client/Game.cc
+@@ -100,11 +100,21 @@ void Game::init() {
+     title_ui_window.add_child(
+         Ui::make_changelog()
+     );
+-    // Phase 6 craft (Patch 0010): Inventory + Craft panels live in
+-    // other_ui_window now (always-rendered layer) so they stay open after
+-    // the player clicks Play and the title screen fades out. The sidebar
+-    // button container also goes into other_ui_window for the same reason.
+-    // (See Ui::make_meta_sidebar / make_inventory_panel / make_craft_panel.)
++    // Phase 6 craft (Patch 0011): Inventory + Craft panels + sidebar live in
++    // BOTH title_ui_window AND game_ui_window (separate instances) so they
++    // stay reachable from the title screen and during gameplay. They used
++    // to live in other_ui_window, but that window has no_polling=1 — its
++    // children render but never receive mouse events, so the sidebar
++    // buttons were dead. Each window only renders when its screen is
++    // active, so the duplicated instances never both show at once except
++    // during the brief title↔game transition (both show the same panel
++    // identically — visually a no-op).
++    title_ui_window.add_child(Ui::make_meta_sidebar());
++    title_ui_window.add_child(Ui::make_inventory_panel());
++    title_ui_window.add_child(Ui::make_craft_panel());
++    game_ui_window.add_child(Ui::make_meta_sidebar());
++    game_ui_window.add_child(Ui::make_inventory_panel());
++    game_ui_window.add_child(Ui::make_craft_panel());
+     title_ui_window.add_child(
+         Ui::make_github_link_button()
+     );
+@@ -145,16 +155,9 @@ void Game::init() {
+         }, 20, 0, { .h_justify = Ui::Style::Left, .v_justify = Ui::Style::Top })
+     );
+     Ui::make_petal_tooltips();
+-    // Patch 0010: meta-game UI in always-on layer (visible title + in game).
+-    other_ui_window.add_child(
+-        Ui::make_meta_sidebar()
+-    );
+-    other_ui_window.add_child(
+-        Ui::make_inventory_panel()
+-    );
+-    other_ui_window.add_child(
+-        Ui::make_craft_panel()
+-    );
++    // Patch 0011: meta sidebar + Inventory/Craft panels moved out of
++    // other_ui_window (no_polling=1 kills clicks). See block above where
++    // they're registered in title_ui_window + game_ui_window.
+     other_ui_window.add_child(
+         Ui::make_debug_stats()
+     );
+diff --git a/Server/Bot.cc b/Server/Bot.cc
+index b4ee943..6ba64d7 100644
+--- a/Server/Bot.cc
++++ b/Server/Bot.cc
+@@ -20,6 +20,11 @@ namespace BotConfig {
+     constexpr float FLEE_HEALTH_RATIO      = 0.30f;
+     constexpr float WANDER_RANGE           = 1500.0f;  // half-width of wander target offset
+     constexpr float WANDER_STOP_DIST       = 50.0f;    // close enough to wander target → stop
++    // Patch 0011: stop accelerating into the target once we're within fight
++    // range. Petals when attacking orbit at ~r+100 (Flower.cc:188), so we
++    // want to sit just inside that — close enough that the orbit sweep
++    // covers the target, far enough that we're not wedged against it.
++    constexpr float FIGHT_RANGE            = 90.0f;
+ }
+ 
+ namespace BotNames {
+@@ -112,9 +117,11 @@ void Bot::tick(Simulation *sim) {
+ 
+     Entity &player = sim->get_ent(camera.get_player());
+ 
+-    // Phase 5B1: find nearest target — mobs OR enemy flowers (real players, never other bots)
+-    // Bots all share team=NULL_ENTITY so they never target each other.
+-    // Real players have unique team = camera.id, so they're seen as enemies.
++    // Patch 0011: target search — mobs OR enemy flowers (real players only).
++    // Bots now each have a UNIQUE team (camera id), matching real players,
++    // so mob aggro works. To avoid bots dog-piling on each other we filter
++    // out other bots here via EntityFlags::kCPUControlled on the candidate
++    // player entity (set in BotManager::make_bot / Bot::tick on respawn).
+     EntityID nearest_target = NULL_ENTITY;
+     float nearest_dist = 1e9f;
+     sim->spatial_hash.query(
+@@ -126,9 +133,10 @@ void Bot::tick(Simulation *sim) {
+             if (ent.has_component(kMob)) {
+                 is_target = true;
+             } else if (ent.has_component(kFlower)) {
+-                // Skip self; skip same-team (other bots)
+-                if (ent.id != player.id && ent.get_team() != camera.get_team())
+-                    is_target = true;
++                if (ent.id == player.id) return;                                 // self
++                if (BitMath::at(ent.flags, EntityFlags::kCPUControlled)) return; // other bot
++                if (ent.get_team() == camera.get_team()) return;                 // teammate (TDM)
++                is_target = true;
+             }
+             if (!is_target) return;
+             float d = distance_between(player, ent);
+@@ -150,10 +158,18 @@ void Bot::tick(Simulation *sim) {
+         accel = Vector(player.get_x() - target.get_x(), player.get_y() - target.get_y());
+         if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
+     } else if (nearest_target != NULL_ENTITY) {
+-        // Engage: move toward target, attack
++        // Engage: move toward target up to fight range, then hold position so
++        // orbiting petals sweep through the target. Without the hold, bots
++        // accelerate every tick into the mob and wedge themselves against
++        // it; the surrounding mob blob then physically traps them.
+         Entity &target = sim->get_ent(nearest_target);
+-        accel = Vector(target.get_x() - player.get_x(), target.get_y() - player.get_y());
+-        if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
++        Vector to(target.get_x() - player.get_x(), target.get_y() - player.get_y());
++        if (to.magnitude() > BotConfig::FIGHT_RANGE) {
++            accel = to;
++            if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
++        } else {
++            accel.set(0, 0);
++        }
+         BitMath::set(input_flags, InputFlags::kAttacking);
+     } else {
+         // Wander
+diff --git a/Server/BotManager.cc b/Server/BotManager.cc
+index 17646bd..d580e64 100644
+--- a/Server/BotManager.cc
++++ b/Server/BotManager.cc
+@@ -30,7 +30,17 @@ namespace {
+         cam.add_component(kCamera);
+         cam.add_component(kRelations);
+         cam.set_fov(BASE_FOV);
+-        cam.set_team(NULL_ENTITY);
++        // Patch 0011: give each bot its OWN team (= its camera id), matching
++        // how real players work (Game::add_client sets `ent.team = ent.id`).
++        // Previously bots all shared team=NULL_ENTITY, which is also the team
++        // wild mobs spawn with (Map::spawn_random_mob), so mob aggro
++        // (Detection.cc:13 `if ent.team == entity.team return`) saw bots as
++        // teammates and ignored them — bots would wedge against the first
++        // mob they touched and surrounded mobs would never engage. With a
++        // unique team, mobs aggro bots like real players. Bot-vs-bot
++        // targeting is filtered separately in Bot::tick via the
++        // kCPUControlled flag.
++        cam.set_team(cam.id);
+         cam.set_color(ColorID::kGray);
+         cam.set_respawn_level(BotTiers::get_random_level(tier));
+ 
