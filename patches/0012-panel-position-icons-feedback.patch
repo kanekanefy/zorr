@@ -1,0 +1,233 @@
+diff --git a/Client/Ui/TitleScreen/Craft.cc b/Client/Ui/TitleScreen/Craft.cc
+index 251b2b7..7126074 100644
+--- a/Client/Ui/TitleScreen/Craft.cc
++++ b/Client/Ui/TitleScreen/Craft.cc
+@@ -237,17 +237,58 @@ Element *make_petal_grid() {
+     return grid;
+ }
+ 
+-Element *make_last_result_text() {
+-    return new Ui::DynamicText(12, []() {
+-        double age = Game::timestamp - Game::last_craft_timestamp;
+-        if (age > 5.0 || Game::last_craft_timestamp < 0) return std::string("");
+-        if (Game::last_craft_success) {
+-            return std::format("Crafted: {}", PETAL_DATA[Game::last_craft_result].name);
+-        } else if (Game::last_craft_destroyed > 0) {
+-            return std::format("Failed. Destroyed {} of 5.", Game::last_craft_destroyed);
+-        }
+-        return std::string("");
+-    }, { .fill = 0xffffe066, .h_justify = Style::Left });
++// Patch 0012: prominent success/fail banners. Original feedback was a 12pt
++// dim yellow line at the bottom of a bottom-anchored panel — easily missed,
++// and worse, often hidden behind the level bar / loadout strip. Now: two
++// big colored banners (green/red) shown right under the panel title for
++// 8 seconds. Easy to see, hard to miss.
++constexpr double RESULT_DISPLAY_SECONDS = 8.0;
++
++Element *make_success_banner() {
++    return new Ui::HContainer({
++        new Ui::DynamicText(18, []() {
++            if (!Game::last_craft_success) return std::string("");
++            return std::format("✓ Crafted {} (+1)",
++                PETAL_DATA[Game::last_craft_result].name);
++        }, { .fill = 0xffffffff, .h_justify = Style::Left })
++    }, 10, 0, {
++        .fill = 0xff2da64f,           // bright green
++        .stroke_hsv = 0.6,
++        .line_width = 2,
++        .round_radius = 4,
++        .should_render = []() {
++            double age = Game::timestamp - Game::last_craft_timestamp;
++            return Game::last_craft_success
++                && age <= RESULT_DISPLAY_SECONDS
++                && Game::last_craft_timestamp >= 0;
++        },
++        .h_justify = Style::Left
++    });
++}
++
++Element *make_failure_banner() {
++    return new Ui::HContainer({
++        new Ui::DynamicText(18, []() {
++            if (Game::last_craft_success) return std::string("");
++            if (Game::last_craft_destroyed == 0) return std::string("");
++            return std::format("✗ Failed — lost {} petal{}",
++                Game::last_craft_destroyed,
++                Game::last_craft_destroyed == 1 ? "" : "s");
++        }, { .fill = 0xffffffff, .h_justify = Style::Left })
++    }, 10, 0, {
++        .fill = 0xffc94c4c,           // red
++        .stroke_hsv = 0.6,
++        .line_width = 2,
++        .round_radius = 4,
++        .should_render = []() {
++            double age = Game::timestamp - Game::last_craft_timestamp;
++            return !Game::last_craft_success
++                && Game::last_craft_destroyed > 0
++                && age <= RESULT_DISPLAY_SECONDS
++                && Game::last_craft_timestamp >= 0;
++        },
++        .h_justify = Style::Left
++    });
+ }
+ 
+ } // namespace
+@@ -255,6 +296,11 @@ Element *make_last_result_text() {
+ Element *Ui::make_craft_panel() {
+     Element *elt = new Ui::VContainer({
+         new Ui::StaticText(22, "Craft"),
++        // Patch 0012: result banners moved here, right under the title,
++        // so the player can't miss them. Both render when active; they're
++        // mutually exclusive via their should_render checks.
++        make_success_banner(),
++        make_failure_banner(),
+         new Ui::StaticText(11,
+             "Pick a rarity, click 5 petals -> roll for an upgrade.",
+             { .fill = 0xffcccccc, .h_justify = Style::Left }),
+@@ -268,25 +314,26 @@ Element *Ui::make_craft_panel() {
+         new Ui::StaticText(12, "Rarity:", { .fill = 0xffeeeeee, .h_justify = Style::Left }),
+         make_tab_row(),
+         new Ui::Element(0, 6),
+-        make_petal_grid(),
+-        new Ui::Element(0, 6),
+-        make_last_result_text()
++        make_petal_grid()
+     }, 14, 6, {
+         .fill = 0xff3a8a3a,
+         .line_width = 6,
+         .round_radius = 4,
++        // Patch 0012: slide in horizontally from the LEFT to match the
++        // sidebar-icon entry point. The old upward slide doesn't make
++        // sense once the panel anchors center-left instead of bottom-left.
+         .animate = [](Element *e, Renderer &ctx) {
+-            ctx.translate(0, (1 - e->animation) * 2 * e->height);
++            ctx.translate(-(1 - e->animation) * (e->width + 80), 0);
+         },
+-        // Patch 0010: dropped `&& Game::should_render_title_ui()` so the
+-        // panel stays usable after the player enters the game. The element
+-        // now lives in other_ui_window (always rendered).
+         .should_render = []() {
+             return Ui::panel_open == Panel::kCraft;
+         },
+         .h_justify = Style::Left,
+-        .v_justify = Style::Bottom
++        .v_justify = Style::Middle
+     });
++    // Patch 0012: same anchor scheme as Inventory — 70px from left edge,
++    // vertically centered, so we clear the level bar at the bottom.
++    elt->x = 70;
+     Ui::Panel::craft = elt;
+     return elt;
+ }
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index 6d5df30..88ff6ed 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -129,16 +129,23 @@ Element *Ui::make_inventory_panel() {
+         .fill = 0xff7c5cb0,  // Omega-ish purple — matches hornex rarity-bg-8
+         .line_width = 6,
+         .round_radius = 4,
++        // Patch 0012: slide in from the LEFT (out from under the sidebar)
++        // instead of UP from the bottom — the panel now anchors center-left
++        // so an upward slide would cross the middle of the screen.
+         .animate = [](Element *e, Renderer &ctx) {
+-            ctx.translate(0, (1 - e->animation) * 2 * e->height);
++            ctx.translate(-(1 - e->animation) * (e->width + 80), 0);
+         },
+-        // Patch 0010: dropped title-screen gate so panel stays open after Play.
+         .should_render = []() {
+             return Ui::panel_open == Panel::kInventory;
+         },
+         .h_justify = Style::Left,
+-        .v_justify = Style::Bottom
++        .v_justify = Style::Middle
+     });
++    // Patch 0012: anchor next to the sidebar (sidebar is 44 wide + x=12),
++    // vertically centered so we never overlap the level bar or loadout strip
++    // at the bottom of the screen. h_justify=Left + v_justify=Middle means
++    // the panel's left edge sits 70px from the window left, vertical middle.
++    elt->x = 70;
+     Ui::Panel::inventory = elt;
+     return elt;
+ }
+diff --git a/Client/Ui/TitleScreen/MetaSidebar.cc b/Client/Ui/TitleScreen/MetaSidebar.cc
+index 7f7e49a..03868b3 100644
+--- a/Client/Ui/TitleScreen/MetaSidebar.cc
++++ b/Client/Ui/TitleScreen/MetaSidebar.cc
+@@ -34,45 +34,56 @@ using namespace Ui;
+ 
+ namespace {
+ 
+-// Bag icon — for Inventory. Simple rounded rectangle + handle.
++// Patch 0012: clearer icons. Original anvil was an abstract trapezoid that
++// read as "weird blob" at 32px; the bag was so simple it looked like a
++// notepad. Backpack now has visible strap loops + a body pocket line, and
++// Craft uses a hammer (universal "build/craft" symbol).
++
++// Backpack icon — for Inventory.
+ void draw_bag_icon(Element *elt, Renderer &ctx) {
+     ctx.scale(elt->width / 32);
+     ctx.set_fill(0xffffffff);
+     ctx.set_stroke(0xff222222);
+     ctx.set_line_width(2);
+-    // handle (semicircle)
++    ctx.round_line_join();
++    // Two strap loops at top
++    ctx.begin_path();
++    ctx.partial_arc(-5, -8, 3, M_PI, 0, 0);
++    ctx.stroke();
+     ctx.begin_path();
+-    ctx.partial_arc(0, -6, 6, M_PI, 0, 0);
++    ctx.partial_arc(5, -8, 3, M_PI, 0, 0);
+     ctx.stroke();
+-    // body
++    // Main body — rounded rect
+     ctx.begin_path();
+-    ctx.round_rect(-9, -4, 18, 14, 3);
++    ctx.round_rect(-10, -6, 20, 18, 3);
+     ctx.fill();
+     ctx.stroke();
++    // Front pocket — a small rectangle with stitch line at the top
++    ctx.begin_path();
++    ctx.round_rect(-7, 0, 14, 8, 1);
++    ctx.stroke();
+ }
+ 
+-// Anvil icon — for Craft. Trapezoidal anvil silhouette.
++// Hammer icon — for Craft. Big chunky head + handle.
+ void draw_anvil_icon(Element *elt, Renderer &ctx) {
+     ctx.scale(elt->width / 32);
+     ctx.set_fill(0xffffffff);
+     ctx.set_stroke(0xff222222);
+     ctx.set_line_width(2);
+     ctx.round_line_join();
+-    // anvil shape: wide top, narrow waist, base
++    // Hammer head — thick horizontal block, slightly higher than center
++    ctx.begin_path();
++    ctx.round_rect(-10, -10, 20, 9, 2);
++    ctx.fill();
++    ctx.stroke();
++    // Neck/collar — small narrow band right under the head
++    ctx.begin_path();
++    ctx.round_rect(-3, -1, 6, 3, 1);
++    ctx.fill();
++    ctx.stroke();
++    // Handle — vertical tapered bar extending down
+     ctx.begin_path();
+-    ctx.move_to(-10, -6);
+-    ctx.line_to(10, -6);
+-    ctx.line_to(10, -2);
+-    ctx.line_to(4, -2);
+-    ctx.line_to(4, 4);
+-    ctx.line_to(8, 4);
+-    ctx.line_to(8, 8);
+-    ctx.line_to(-8, 8);
+-    ctx.line_to(-8, 4);
+-    ctx.line_to(-4, 4);
+-    ctx.line_to(-4, -2);
+-    ctx.line_to(-10, -2);
+-    ctx.close_path();
++    ctx.round_rect(-2, 2, 4, 11, 2);
+     ctx.fill();
+     ctx.stroke();
+ }
