@@ -27,7 +27,7 @@ index 83a85b9..51d1fa6 100644
      DEBUG_ONLY(assert(defender.has_component(kHealth));)
      if (defender.immunity_ticks > 0) return;
 diff --git a/Server/EntityFunctions/Death.cc b/Server/EntityFunctions/Death.cc
-index 2037825..4d56fcb 100644
+index 2037825..761a14e 100644
 --- a/Server/EntityFunctions/Death.cc
 +++ b/Server/EntityFunctions/Death.cc
 @@ -1,5 +1,6 @@
@@ -37,7 +37,37 @@ index 2037825..4d56fcb 100644
  #include <Server/PetalTracker.hh>
  #include <Server/Spawn.hh>
  
-@@ -43,7 +44,7 @@ static void _add_score(Simulation *sim, EntityID const killer_id, Entity const &
+@@ -10,6 +11,29 @@
+ #include <algorithm>
+ #include <iostream>
+ 
++// Phase 5B2: tier-aware bonus loot pools for bot deaths.
++// All Basic/None excluded — drops should always be exciting.
++namespace {
++    PetalID::T const ROOKIE_LOOT_POOL[] = {
++        PetalID::kLight, PetalID::kHeavy, PetalID::kLeaf, PetalID::kTwin,
++        PetalID::kIris, PetalID::kRose, PetalID::kStinger,
++    };
++    PetalID::T const COMPETITOR_LOOT_POOL[] = {
++        PetalID::kFaster, PetalID::kPeas, PetalID::kPincer, PetalID::kCactus,
++        PetalID::kBubble, PetalID::kMissile, PetalID::kWing, PetalID::kDahlia,
++        PetalID::kStick, PetalID::kBlueIris, PetalID::kAzalea, PetalID::kAntennae,
++        PetalID::kSand, PetalID::kWeb, PetalID::kSalt, PetalID::kRock,
++    };
++    PetalID::T const VETERAN_LOOT_POOL[] = {
++        PetalID::kHeaviest, PetalID::kTriplet, PetalID::kTringer, PetalID::kTricac,
++        PetalID::kTriweb, PetalID::kYggdrasil, PetalID::kLotus, PetalID::kYucca,
++        PetalID::kPoisonCactus, PetalID::kBeetleEgg, PetalID::kAntEgg, PetalID::kPollen,
++        PetalID::kMoon, PetalID::kThirdEye, PetalID::kObserver, PetalID::kGoldenLeaf,
++        PetalID::kCorn, PetalID::kBone, PetalID::kRice, PetalID::kPoisonPeas,
++        PetalID::kCutter,
++    };
++}
++
+ static void _alloc_drops(Simulation *sim, std::vector<PetalID::T> &success_drops, float x, float y) {
+     #ifdef DEBUG
+     for (PetalID::T id : success_drops)
+@@ -43,7 +67,7 @@ static void _add_score(Simulation *sim, EntityID const killer_id, Entity const &
      if (!sim->ent_exists(killer_id)) return;
      Entity &killer = sim->get_ent(killer_id);
      if (killer.has_component(kScore))
@@ -46,7 +76,7 @@ index 2037825..4d56fcb 100644
  }
  
  void entity_on_death(Simulation *sim, Entity const &ent) {
-@@ -72,7 +73,7 @@ void entity_on_death(Simulation *sim, Entity const &ent) {
+@@ -72,7 +96,7 @@ void entity_on_death(Simulation *sim, Entity const &ent) {
              std::vector<PetalID::T> success_drops = {};
              StaticArray<float, MAX_DROPS_PER_MOB> const &drop_chances = MOB_DROP_CHANCES[ent.get_mob_id()];
              for (uint32_t i = 0; i < mob_data.drops.size(); ++i) 
@@ -55,6 +85,38 @@ index 2037825..4d56fcb 100644
              _alloc_drops(sim, success_drops, ent.get_x(), ent.get_y());
          }
          if (ent.get_mob_id() == MobID::kAntHole && 
+@@ -117,6 +141,31 @@ void entity_on_death(Simulation *sim, Entity const &ent) {
+             potential.pop_back();
+         }
+         _alloc_drops(sim, success_drops, ent.get_x(), ent.get_y());
++        // Phase 5B2: bot bonus drops — CPU-controlled flowers always drop tier-pool petals.
++        // Tier inferred from current level (rookies 1-15, competitors 16-50, veterans 51+).
++        if (BitMath::at(ent.flags, EntityFlags::kCPUControlled)) {
++            uint32_t lvl = score_to_level(ent.get_score());
++            int bonus_count;
++            PetalID::T const *pool;
++            size_t pool_size;
++            if (lvl <= 15) {
++                bonus_count = OpMode::BOT_BONUS_DROPS_ROOKIE;
++                pool = ROOKIE_LOOT_POOL;
++                pool_size = sizeof(ROOKIE_LOOT_POOL) / sizeof(ROOKIE_LOOT_POOL[0]);
++            } else if (lvl <= 50) {
++                bonus_count = OpMode::BOT_BONUS_DROPS_COMPETITOR;
++                pool = COMPETITOR_LOOT_POOL;
++                pool_size = sizeof(COMPETITOR_LOOT_POOL) / sizeof(COMPETITOR_LOOT_POOL[0]);
++            } else {
++                bonus_count = OpMode::BOT_BONUS_DROPS_VETERAN;
++                pool = VETERAN_LOOT_POOL;
++                pool_size = sizeof(VETERAN_LOOT_POOL) / sizeof(VETERAN_LOOT_POOL[0]);
++            }
++            std::vector<PetalID::T> bonus;
++            for (int i = 0; i < bonus_count; ++i)
++                bonus.push_back(pool[(uint32_t)(frand() * pool_size)]);
++            _alloc_drops(sim, bonus, ent.get_x(), ent.get_y());
++        }
+         //if the camera is the one that disconnects
+         //no need to re-add the petals to the petal tracker
+         if (!sim->ent_alive(ent.get_parent()))
 diff --git a/Shared/Map.cc b/Shared/Map.cc
 index 324b022..2ed0b90 100644
 --- a/Shared/Map.cc
@@ -76,10 +138,10 @@ index 324b022..2ed0b90 100644
          sum += s.chance;
 diff --git a/Shared/OpMode.hh b/Shared/OpMode.hh
 new file mode 100644
-index 0000000..45beedb
+index 0000000..f794a2a
 --- /dev/null
 +++ b/Shared/OpMode.hh
-@@ -0,0 +1,21 @@
+@@ -0,0 +1,26 @@
 +#pragma once
 +
 +// zorr OP-Mode tunables — Phase 1: compile-time constants.
@@ -87,19 +149,24 @@ index 0000000..45beedb
 +// Phase 2 will replace these with values loaded from /etc/zorr/op-config.json.
 +
 +namespace OpMode {
-+    // Leveling (秒升级)
-+    inline constexpr float LEVEL_DIV = 100.0f;       // XP-to-next-level divided by this
-+    inline constexpr float XP_MULT = 50.0f;          // XP awarded per kill * this
++    // Leveling — Phase 5A: 从"秒升级"调整成"快进游戏" (60-90min 通关感)
++    inline constexpr float LEVEL_DIV = 30.0f;        // XP-to-next-level divided by this (was 100 → 30)
++    inline constexpr float XP_MULT = 8.0f;           // XP per kill * this (was 50 → 8, more meaningful progression)
 +    inline constexpr bool  ALL_SLOTS_FROM_START = true;
 +
-+    // Survivability (近乎不死)
-+    inline constexpr float HP_MULT = 10.0f;          // Flower HP * this
-+    inline constexpr float PETAL_DMG_MULT = 20.0f;   // Petal-to-mob damage * this
-+    inline constexpr float MOB_DMG_MULT = 0.1f;      // Mob-to-flower damage * this
++    // Survivability — Phase 5A: 给战斗增加紧张感
++    inline constexpr float HP_MULT = 5.0f;           // Flower HP * this (was 10 → 5)
++    inline constexpr float PETAL_DMG_MULT = 20.0f;   // Petal-to-mob damage * this (unchanged — killing mobs should still feel powerful)
++    inline constexpr float MOB_DMG_MULT = 0.6f;      // Mob-to-flower damage * this (was 0.1 → 0.6, mobs now actually hurt)
 +
 +    // Economy (掉率高 + 怪密度合理 — 平衡爽快与客户端 FPS)
 +    inline constexpr float DROP_MULT = 8.0f;         // Drop chance * this (capped at 1.0 by frand). Was 20 → 8 to reduce drop pile-up & client lag.
 +    inline constexpr float DENSITY_MULT = 3.0f;      // Mob density * this. Was 5 → 3 to reduce entity count.
++
++    // Bot drops — Phase 5B2: 死亡时除了原生 drops,额外按 tier 加 N 个随机 petal
++    inline constexpr int   BOT_BONUS_DROPS_ROOKIE     = 1;
++    inline constexpr int   BOT_BONUS_DROPS_COMPETITOR = 2;
++    inline constexpr int   BOT_BONUS_DROPS_VETERAN    = 3;
 +}
 diff --git a/Shared/StaticData.cc b/Shared/StaticData.cc
 index 4e2d3d3..c32d9d1 100644

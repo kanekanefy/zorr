@@ -1,9 +1,9 @@
 diff --git a/Server/Bot.cc b/Server/Bot.cc
 new file mode 100644
-index 0000000..a5a28aa
+index 0000000..29cce68
 --- /dev/null
 +++ b/Server/Bot.cc
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,171 @@
 +#include <Server/Bot.hh>
 +
 +#include <Server/PetalTracker.hh>
@@ -53,13 +53,15 @@ index 0000000..a5a28aa
 +}
 +
 +namespace BotTiers {
++    // Phase 5B3: 修空花瓣 bug — Basic 永不掉落 (Death.cc 第 96 行过滤),
++    // 所以原来 8-slot 全 Basic 的 Rookie 死了什么都不掉。改成混合 Common+Unusual。
 +    static PetalID::T const ROOKIE_INVENTORY[8] = {
-+        PetalID::kBasic, PetalID::kBasic, PetalID::kBasic, PetalID::kBasic,
-+        PetalID::kBasic, PetalID::kBasic, PetalID::kBasic, PetalID::kBasic,
++        PetalID::kBasic, PetalID::kLight, PetalID::kBasic, PetalID::kLeaf,
++        PetalID::kBasic, PetalID::kTwin,  PetalID::kLight, PetalID::kBasic,
 +    };
 +    static PetalID::T const COMPETITOR_INVENTORY[8] = {
 +        PetalID::kStinger, PetalID::kRose, PetalID::kFaster, PetalID::kHeavy,
-+        PetalID::kBasic,   PetalID::kBasic, PetalID::kBasic, PetalID::kBasic,
++        PetalID::kIris,    PetalID::kLight, PetalID::kLeaf,  PetalID::kBasic,
 +    };
 +    static PetalID::T const VETERAN_INVENTORY[8] = {
 +        PetalID::kHeaviest, PetalID::kStinger,  PetalID::kYggdrasil, PetalID::kRose,
@@ -104,25 +106,37 @@ index 0000000..a5a28aa
 +        Entity &player = alloc_player(sim, camera.get_team());
 +        player_spawn(sim, camera, player);
 +        player.set_name(name);
++        // Phase 5B2: mark CPU-controlled so Death.cc can give tier-aware bonus drops
++        BitMath::set(player.flags, EntityFlags::kCPUControlled);
 +        respawn_cooldown = BotConfig::RESPAWN_COOLDOWN_TICKS;
 +        return;
 +    }
 +
 +    Entity &player = sim->get_ent(camera.get_player());
 +
-+    // Find nearest mob within vision radius
-+    EntityID nearest_mob = NULL_ENTITY;
++    // Phase 5B1: find nearest target — mobs OR enemy flowers (real players, never other bots)
++    // Bots all share team=NULL_ENTITY so they never target each other.
++    // Real players have unique team = camera.id, so they're seen as enemies.
++    EntityID nearest_target = NULL_ENTITY;
 +    float nearest_dist = 1e9f;
 +    sim->spatial_hash.query(
 +        player.get_x(), player.get_y(),
 +        BotConfig::VISION_RADIUS, BotConfig::VISION_RADIUS,
 +        [&](Simulation *, Entity &ent) {
-+            if (!ent.has_component(kMob)) return;
 +            if (!sim->ent_alive(ent.id)) return;
++            bool is_target = false;
++            if (ent.has_component(kMob)) {
++                is_target = true;
++            } else if (ent.has_component(kFlower)) {
++                // Skip self; skip same-team (other bots)
++                if (ent.id != player.id && ent.get_team() != camera.get_team())
++                    is_target = true;
++            }
++            if (!is_target) return;
 +            float d = distance_between(player, ent);
 +            if (d < nearest_dist) {
 +                nearest_dist = d;
-+                nearest_mob = ent.id;
++                nearest_target = ent.id;
 +            }
 +        }
 +    );
@@ -132,15 +146,15 @@ index 0000000..a5a28aa
 +    Vector accel;
 +    uint8_t input_flags = 0;
 +
-+    if (low_health && nearest_mob != NULL_ENTITY) {
-+        // Flee: move away from nearest mob
-+        Entity &mob = sim->get_ent(nearest_mob);
-+        accel = Vector(player.get_x() - mob.get_x(), player.get_y() - mob.get_y());
++    if (low_health && nearest_target != NULL_ENTITY) {
++        // Flee: move away from nearest target
++        Entity &target = sim->get_ent(nearest_target);
++        accel = Vector(player.get_x() - target.get_x(), player.get_y() - target.get_y());
 +        if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
-+    } else if (nearest_mob != NULL_ENTITY) {
-+        // Engage: move toward mob, attack
-+        Entity &mob = sim->get_ent(nearest_mob);
-+        accel = Vector(mob.get_x() - player.get_x(), mob.get_y() - player.get_y());
++    } else if (nearest_target != NULL_ENTITY) {
++        // Engage: move toward target, attack
++        Entity &target = sim->get_ent(nearest_target);
++        accel = Vector(target.get_x() - player.get_x(), target.get_y() - player.get_y());
 +        if (accel.magnitude() > 0) accel.set_magnitude(PLAYER_ACCELERATION);
 +        BitMath::set(input_flags, InputFlags::kAttacking);
 +    } else {
@@ -191,10 +205,10 @@ index 0000000..bcf26c2
 +};
 diff --git a/Server/BotManager.cc b/Server/BotManager.cc
 new file mode 100644
-index 0000000..376db0f
+index 0000000..287ec7a
 --- /dev/null
 +++ b/Server/BotManager.cc
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,76 @@
 +#include <Server/BotManager.hh>
 +
 +#include <Server/PetalTracker.hh>
@@ -242,6 +256,8 @@ index 0000000..376db0f
 +        Entity &camera = alloc_bot_camera(sim, tier);
 +        Entity &player = alloc_player(sim, camera.get_team());
 +        player_spawn(sim, camera, player);
++        // Phase 5B2: mark CPU-controlled so Death.cc can give tier-aware bonus drops
++        BitMath::set(player.flags, EntityFlags::kCPUControlled);
 +
 +        Bot bot;
 +        bot.camera_id              = camera.id;
