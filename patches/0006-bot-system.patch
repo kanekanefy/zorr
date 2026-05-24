@@ -1,9 +1,9 @@
 diff --git a/Server/Bot.cc b/Server/Bot.cc
 new file mode 100644
-index 0000000..29cce68
+index 0000000..b4ee943
 --- /dev/null
 +++ b/Server/Bot.cc
-@@ -0,0 +1,171 @@
+@@ -0,0 +1,175 @@
 +#include <Server/Bot.hh>
 +
 +#include <Server/PetalTracker.hh>
@@ -29,13 +29,17 @@ index 0000000..29cce68
 +}
 +
 +namespace BotNames {
++    // Phase 5B follow-up: 扩容到 20 rookie + 10 competitor + 5 veteran(配合 30 总数)
 +    static char const *const ROOKIE_NAMES[] = {
 +        "noob123", "flwr_new", "petalpls", "rosie_xo", "imaweed",
 +        "floofyy", "yo_im_new", "bee_lover", "petal99", "flower42",
++        "n00bie", "imdumb", "petalboi", "weed_lord", "flwr_kid",
++        "kawaiii", "begnr_99", "imBASIC", "wisp_pls", "ladybeg",
 +    };
 +    static char const *const COMPETITOR_NAMES[] = {
 +        "GardenFox", "BumbleByte", "stigmatize",
 +        "PollenDrip", "LadyBugLuv", "SporeStorm",
++        "TigerLily", "ThornStitch", "CoralRift", "VioletSpire",
 +    };
 +    static char const *const VETERAN_NAMES[] = {
 +        "xX_Heaviest_Xx", "florr_pr0", "L1GHTNlNG",
@@ -44,8 +48,8 @@ index 0000000..29cce68
 +
 +    std::string pick(BotTier tier, uint32_t index) {
 +        switch (tier) {
-+            case BotTier::Rookie:     return ROOKIE_NAMES[index % 10];
-+            case BotTier::Competitor: return COMPETITOR_NAMES[index % 6];
++            case BotTier::Rookie:     return ROOKIE_NAMES[index % 20];
++            case BotTier::Competitor: return COMPETITOR_NAMES[index % 10];
 +            case BotTier::Veteran:    return VETERAN_NAMES[index % 5];
 +        }
 +        return "bot";
@@ -205,10 +209,10 @@ index 0000000..bcf26c2
 +};
 diff --git a/Server/BotManager.cc b/Server/BotManager.cc
 new file mode 100644
-index 0000000..287ec7a
+index 0000000..17646bd
 --- /dev/null
 +++ b/Server/BotManager.cc
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,77 @@
 +#include <Server/BotManager.hh>
 +
 +#include <Server/PetalTracker.hh>
@@ -228,9 +232,10 @@ index 0000000..287ec7a
 +}
 +
 +namespace {
-+    constexpr int N_ROOKIES     = 10;
-+    constexpr int N_COMPETITORS = 3;
-+    constexpr int N_VETERANS    = 2;
++    // Phase 5B follow-up: 15 → 30 bots, 同比例放大 (10/3/2 → 20/7/3)
++    constexpr int N_ROOKIES     = 20;
++    constexpr int N_COMPETITORS = 7;
++    constexpr int N_VETERANS    = 3;
 +
 +    // Inline the parts of alloc_cpu_camera we need, with our tier-specific config.
 +    // We avoid calling alloc_cpu_camera directly because it sets respawn_level/inventory
