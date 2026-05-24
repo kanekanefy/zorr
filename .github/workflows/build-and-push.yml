@@ -53,3 +53,17 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Trigger Dokploy redeploy after image is pushed to GHCR.
+      # Uses the application-scoped refreshToken webhook (no API key required).
+      # Token is per-app — rotate via Dokploy UI if leaked.
+      # Skipped on tag pushes (only deploy on main-branch pushes).
+      - name: Trigger Dokploy redeploy
+        if: github.ref == 'refs/heads/main' && github.event_name != 'workflow_dispatch'
+        run: |
+          curl -sSf -X POST \
+            "${{ secrets.DOKPLOY_WEBHOOK_URL }}" \
+            -H 'Content-Type: application/json' \
+            -d '{}'
+          echo
+          echo "Dokploy redeploy triggered."
