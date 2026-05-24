@@ -60,7 +60,7 @@ sudo docker restart dokploy-traefik
 ## Cloudflare 代理(后续)
 
 见 `cloudflare/README.md`。简短版:
-1. 上面 traefik.me 域名只是 staging
+1. 上面 sslip.io 域名只是 staging
 2. 真域名想用 `zorr.yourdomain.com` 时,DNS 加 A 记录指向 Dokploy 主机 IP(64.188.28.149)
 3. 在 Dokploy 应用页面追加这个 domain,Let's Encrypt 自动签新证书
 4. Cloudflare 开 Proxied(橙色云)→ TLS + DDoS + 隐藏源站

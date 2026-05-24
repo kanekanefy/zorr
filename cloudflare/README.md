@@ -1,7 +1,8 @@
 # Cloudflare 代理 runbook (后续可选)
 
-第一版部署使用了 Dokploy 自带的 `*.traefik.me` 域名(IP 编码在子域名,
-Let's Encrypt 直接出证书),够你和朋友测玩。
+第一版部署使用了 Dokploy 自带的 `*.sslip.io` 域名(IP 编码在子域名,
+Let's Encrypt 直接出证书),够你和朋友测玩。当前生效:
+`https://zorr-a97703-64-188-28-149.sslip.io`。
 
 想用真正的子域名(`zorr.yourdomain.com`)+ Cloudflare 代理(免费 TLS、
 DDoS、隐藏源站 IP),做下面这些。
@@ -9,7 +10,7 @@ DDoS、隐藏源站 IP),做下面这些。
 ## 前提
 
 - 域名 NS 已指向 Cloudflare
-- Dokploy 部署已经成功(traefik.me 那个 URL 能玩)
+- Dokploy 部署已经成功(sslip.io 那个 URL 能玩)
 
 ## 步骤
 
