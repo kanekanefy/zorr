@@ -1,0 +1,12 @@
+--- a/Client/Rendering.cc
++++ b/Client/Rendering.cc
+@@ -47,7 +47,8 @@
+     {
+         RenderContext context(&renderer);
+         renderer.reset_transform();
+-        renderer.set_fill(0xff987d72);
++        // zorr patch: greener map background
++        renderer.set_fill(0xff2c8a3e);
+         renderer.fill_rect(0,0,renderer.width,renderer.height);
+         renderer.set_fill(alpha);
+         renderer.fill_rect(0,0,renderer.width,renderer.height);

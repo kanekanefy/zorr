@@ -1,0 +1,19 @@
+--- a/Client/public/index.html
++++ b/Client/public/index.html
+@@ -1,6 +1,7 @@
+ <!DOCTYPE html>
+ <html>
+     <head>
++        <title>zorr</title>
+         <link href="https://fonts.googleapis.com/css?family=Ubuntu:700" rel="stylesheet" type="text/css">
+         <style>
+             * {
+@@ -41,7 +42,7 @@
+     </head>
+     <body>
+     <div id="loading-bar">
+-        <span id="loading">Loading</span>
++        <span id="loading">zorr</span>
+     </div>
+     <div id="font-loader" style="font-family: Ubuntu;">hello!</div>
+     <canvas id="canvas" width="0" height="0"></canvas>

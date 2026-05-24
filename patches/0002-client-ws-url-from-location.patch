@@ -1,0 +1,13 @@
+--- a/Client/Socket.cc
++++ b/Client/Socket.cc
+@@ -46,7 +46,9 @@
+ void Socket::connect(std::string const url) {
+     std::cout << "Connecting to " << url << '\n';
+     EM_ASM({
+-        let string = UTF8ToString($1);
++        // zorr patch: derive WS URL from window.location so the image is
++        // portable across domains without recompiling.
++        let string = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+         function connect() {
+             let socket = Module.socket = new WebSocket(string);
+             socket.binaryType = "arraybuffer";
