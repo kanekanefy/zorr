@@ -1,0 +1,86 @@
+diff --git a/Client/Game.cc b/Client/Game.cc
+index c38dbe3..31930ed 100644
+--- a/Client/Game.cc
++++ b/Client/Game.cc
+@@ -10,6 +10,7 @@
+ #include <Shared/Config.hh>
+ 
+ #include <cmath>
++#include <unordered_set>
+ #include <vector>
+ 
+ static double g_last_time = 0;
+@@ -266,6 +267,39 @@ void Game::tick(double time) {
+         }
+         score = player.get_score();
+         overlevel_timer = player.get_overlevel_timer();
++
++        // Patch 0014: detect "full loadout" pickups via drop disappearance
++        // near our player. Server (Collision.cc::_pickup_drop, patch 0014)
++        // now consumes drops even when all 16 loadout slots are full —
++        // snaps the drop to player.xy then request_delete. We watch for
++        // drops entering pending_delete within ~80 units of our player and
++        // count each one once into persistent_inventory. Dedupe via a set
++        // keyed on the EntityID hash so the deletion_animation window
++        // (~4 ticks) doesn't double-count. This is approximate (could
++        // miscount if another player picks up a drop right next to us)
++        // but covers the user's real complaint: inventory stops growing
++        // when loadout is full.
++        static std::unordered_set<uint32_t> counted_drops;
++        float px = player.get_x(), py = player.get_y();
++        constexpr float PICKUP_RADIUS_SQ = 80.0f * 80.0f;
++        simulation.for_each<kDrop>([&](Simulation *, Entity const &drop) {
++            if (!drop.pending_delete) return;
++            uint32_t key = EntityID::make_hash(drop.id);
++            if (counted_drops.count(key)) return;
++            float dx = drop.get_x() - px;
++            float dy = drop.get_y() - py;
++            if (dx*dx + dy*dy > PICKUP_RADIUS_SQ) return;
++            PetalID::T id = drop.get_drop_id();
++            if (id == PetalID::kNone || id >= PetalID::kNumPetals) return;
++            Game::persistent_inventory[id]++;
++            Game::seen_petals[id] = 1;
++            counted_drops.insert(key);
++        });
++        // Periodic cleanup: drops only stay around for deletion_tick≤TPS/5
++        // (~4 ticks), so old keys can be safely pruned. Just clear whole
++        // set when it gets large — cheap and correctness-safe (worst case
++        // a single missed dedupe right after clear).
++        if (counted_drops.size() > 1024) counted_drops.clear();
+     } else {
+         player_id = NULL_ENTITY;
+         overlevel_timer = 0;
+diff --git a/Server/Process/Collision.cc b/Server/Process/Collision.cc
+index 5948f07..048c4c8 100644
+--- a/Server/Process/Collision.cc
++++ b/Server/Process/Collision.cc
+@@ -21,16 +21,23 @@ static void _pickup_drop(Simulation *sim, Entity &player, Entity &drop) {
+     if (!sim->ent_alive(player.get_parent())) return;
+     if (drop.immunity_ticks > 0) return;
+ 
++    // Try to equip into the first empty slot (legacy behavior).
+     for (uint32_t i = 0; i <  player.get_loadout_count() + MAX_SLOT_COUNT; ++i) {
+         if (player.get_loadout_ids(i) != PetalID::kNone) continue;
+         player.set_loadout_ids(i, drop.get_drop_id());
+-        drop.set_x(player.get_x());
+-        drop.set_y(player.get_y());
+-        BitMath::unset(drop.flags, EntityFlags::kIsDespawning);
+-        sim->request_delete(drop.id);
+-        //peaceful transfer, no petal tracking needed
+-        return;
++        break;
+     }
++    // Patch 0014: always consume the drop, even when no slot was free.
++    // Surplus pickups become inventory (counted client-side via the
++    // pending-delete-near-player heuristic in Game::tick — see
++    // Client/Game.cc tick_inventory_pickup_detection). Without this,
++    // drops piled up forever once both loadout rows filled up and the
++    // client-visible inventory stopped growing — the exact complaint.
++    // Snap to player position so the client's nearness check fires.
++    drop.set_x(player.get_x());
++    drop.set_y(player.get_y());
++    BitMath::unset(drop.flags, EntityFlags::kIsDespawning);
++    sim->request_delete(drop.id);
+ }
+ 
+ #define NO(component) (!ent1.has_component(component) && !ent2.has_component(component))
