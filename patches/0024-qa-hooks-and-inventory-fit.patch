@@ -1,0 +1,212 @@
+diff --git a/Client/CMakeLists.txt b/Client/CMakeLists.txt
+index 9fe42b6..b8268e1 100644
+--- a/Client/CMakeLists.txt
++++ b/Client/CMakeLists.txt
+@@ -25,6 +25,7 @@ set(SRCS
+     Main.cc
+     Network.cc
+     Particle.cc
++    QaHooks.cc
+     Rendering.cc
+     Setup.cc
+     Simulation.cc
+@@ -87,7 +88,7 @@ else()
+ endif()
+ 
+ add_link_options(-sEXPORTED_RUNTIME_METHODS=stringToNewUTF8)
+-add_link_options(-sEXPORTED_FUNCTIONS=_main,_key_event,_mouse_event,_touch_event,_wheel_event,_clipboard_event,_loop,_on_message)
++add_link_options(-sEXPORTED_FUNCTIONS=_main,_key_event,_mouse_event,_touch_event,_wheel_event,_clipboard_event,_loop,_on_message,_qa_open_inventory,_qa_open_craft,_qa_close_panels,_qa_inventory_count,_qa_loadout_at,_qa_loadout_count,_qa_equip,_qa_craft_set_rarity,_qa_craft_add,_qa_craft_reset,_qa_craft_slot_count,_qa_craft_execute,_qa_last_craft_result,_qa_last_craft_success,_qa_last_craft_destroyed,_qa_alive,_qa_score,_qa_dump_state)
+ 
+ add_executable(gardn-client ${SRCS})
+ set(CMAKE_EXECUTABLE_SUFFIX ".js")
+diff --git a/Client/QaHooks.cc b/Client/QaHooks.cc
+new file mode 100644
+index 0000000..0b473f8
+--- /dev/null
++++ b/Client/QaHooks.cc
+@@ -0,0 +1,159 @@
++// Patch 0024: QA hooks.
++//
++// Industry SOTA for canvas-game automated testing is *not* clicking pixels —
++// it's exposing a scripting API the test harness can call directly. King
++// (Candy Crush), Riot, Roblox all do this; Supercell extends it to server-
++// side scripted bots. See research notes in patches/README.md.
++//
++// This file exposes a tiny set of EXPORTED C functions emscripten will leave
++// callable from JS as `Module._qa_*`. Plus one helper that writes the full
++// state into `window.__qa_state` as JSON for assertion-style tests.
++//
++// All functions are no-ops if the game isn't ready / alive — safe to call at
++// any time. They mutate the SAME state the UI mutates (Game::panel_open,
++// Game::persistent_inventory, etc.), so tests exercise the real code path,
++// not a parallel mock.
++//
++// Anti-cheat note: NOT gated behind a flag. This game has no anti-cheat —
++// any motivated cheater can already poke the WASM heap via DevTools. Adding
++// a gate adds friction with no real security benefit.
++
++#include <Client/Game.hh>
++#include <Client/Ui/Extern.hh>
++
++#include <Shared/StaticData.hh>
++#include <Shared/StaticDefinitions.hh>
++
++#include <emscripten.h>
++#include <emscripten/em_macros.h>
++
++#include <cstdint>
++#include <cstring>
++#include <string>
++
++extern "C" {
++
++// ---------- panel control ----------------------------------------------
++
++EMSCRIPTEN_KEEPALIVE void qa_open_inventory() {
++    Ui::panel_open = Ui::Panel::kInventory;
++}
++
++EMSCRIPTEN_KEEPALIVE void qa_open_craft() {
++    Ui::panel_open = Ui::Panel::kCraft;
++}
++
++EMSCRIPTEN_KEEPALIVE void qa_close_panels() {
++    Ui::panel_open = Ui::Panel::kNone;
++}
++
++// ---------- inventory inspection ---------------------------------------
++
++EMSCRIPTEN_KEEPALIVE uint32_t qa_inventory_count(uint8_t petal_id) {
++    if (petal_id >= PetalID::kNumPetals) return 0;
++    return Game::persistent_inventory[petal_id];
++}
++
++EMSCRIPTEN_KEEPALIVE uint8_t qa_loadout_at(uint8_t pos) {
++    if (pos >= 2 * MAX_SLOT_COUNT) return PetalID::kNone;
++    return (uint8_t)Game::cached_loadout[pos];
++}
++
++EMSCRIPTEN_KEEPALIVE uint8_t qa_loadout_count() {
++    return Game::loadout_count;
++}
++
++// ---------- inventory actions ------------------------------------------
++
++// Returns the slot equipped into, or 0xff if no slot available / not alive.
++EMSCRIPTEN_KEEPALIVE uint8_t qa_equip(uint8_t petal_id) {
++    return Game::equip_to_first_empty((PetalID::T)petal_id);
++}
++
++// ---------- craft actions ----------------------------------------------
++
++EMSCRIPTEN_KEEPALIVE void qa_craft_set_rarity(uint8_t r) {
++    if (r < RarityID::kNumRarities) Game::craft_slots_set_rarity(r);
++}
++
++EMSCRIPTEN_KEEPALIVE uint8_t qa_craft_add(uint8_t petal_id) {
++    if (petal_id >= PetalID::kNumPetals) return 0;
++    return Game::craft_slots_add_petal((PetalID::T)petal_id) ? 1 : 0;
++}
++
++EMSCRIPTEN_KEEPALIVE void qa_craft_reset() {
++    Game::craft_slots_reset();
++}
++
++EMSCRIPTEN_KEEPALIVE uint8_t qa_craft_slot_count() {
++    return Game::craft_slot_count;
++}
++
++// Returns the produced petal_id (PetalID::kNone if failed/refunded).
++EMSCRIPTEN_KEEPALIVE uint8_t qa_craft_execute() {
++    PetalID::T r = Game::try_craft_from_slots();
++    return (uint8_t)r;
++}
++
++EMSCRIPTEN_KEEPALIVE uint8_t qa_last_craft_result()  { return (uint8_t)Game::last_craft_result; }
++EMSCRIPTEN_KEEPALIVE uint8_t qa_last_craft_success() { return Game::last_craft_success; }
++EMSCRIPTEN_KEEPALIVE uint8_t qa_last_craft_destroyed() { return Game::last_craft_destroyed; }
++
++// ---------- game state -------------------------------------------------
++
++EMSCRIPTEN_KEEPALIVE uint8_t qa_alive() {
++    return Game::alive() ? 1 : 0;
++}
++
++EMSCRIPTEN_KEEPALIVE uint32_t qa_score() {
++    return (uint32_t)Game::score;
++}
++
++// Dumps everything useful into window.__qa_state as JSON. Call once, then
++// read `window.__qa_state` in JS. Cheap enough to call once per tick if
++// you want live state.
++EMSCRIPTEN_KEEPALIVE void qa_dump_state() {
++    std::string s = "{";
++    s += "\"alive\":" + std::string(Game::alive() ? "true" : "false");
++    s += ",\"score\":" + std::to_string((uint32_t)Game::score);
++    s += ",\"loadout_count\":" + std::to_string(Game::loadout_count);
++
++    s += ",\"loadout\":[";
++    for (uint8_t i = 0; i < 2 * MAX_SLOT_COUNT; ++i) {
++        if (i > 0) s += ",";
++        s += std::to_string((uint32_t)Game::cached_loadout[i]);
++    }
++    s += "]";
++
++    s += ",\"inventory\":{";
++    bool first = true;
++    for (uint8_t i = 0; i < PetalID::kNumPetals; ++i) {
++        uint32_t n = Game::persistent_inventory[i];
++        if (n == 0) continue;
++        if (!first) s += ",";
++        s += "\"" + std::to_string((uint32_t)i) + "\":" + std::to_string(n);
++        first = false;
++    }
++    s += "}";
++
++    s += ",\"craft_slots\":[";
++    for (uint8_t i = 0; i < 5; ++i) {
++        if (i > 0) s += ",";
++        s += std::to_string((uint32_t)Game::craft_slots[i]);
++    }
++    s += "]";
++    s += ",\"craft_active_rarity\":" + std::to_string((uint32_t)Game::craft_active_rarity);
++    s += ",\"craft_slot_count\":" + std::to_string((uint32_t)Game::craft_slot_count);
++    s += ",\"last_craft_result\":" + std::to_string((uint32_t)Game::last_craft_result);
++    s += ",\"last_craft_success\":" + std::to_string((uint32_t)Game::last_craft_success);
++    s += ",\"last_craft_destroyed\":" + std::to_string((uint32_t)Game::last_craft_destroyed);
++    s += ",\"panel_open\":" + std::to_string((uint32_t)Ui::panel_open);
++    s += "}";
++
++    // Write into window so JS / Playwright / Puppeteer can inspect.
++    EM_ASM({
++        window.__qa_state = JSON.parse(UTF8ToString($0));
++    }, s.c_str());
++}
++
++} // extern "C"
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index 31d5071..d693044 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -177,13 +177,16 @@ Element *Ui::make_inventory_panel() {
+         new Ui::StaticText(22, "Inventory"),
+         Ui::make_panel_close_button(),
+         0, 0, { .h_justify = Style::Left });
+-    // Patch 0023: scroll height 380→500 to fit more of the always-rendered
+-    // grid (~10 rows × ~55px = 550 — scrolling kicks in for last row or two,
+-    // which is fine, ScrollContainer's wheel handler works once content
+-    // height exceeds viewport).
++    // Patch 0024: scroll height 500→650 to fit ALL ~9 rows of the always-
++    // rendered grid (~9 × 64px row + header text = ~600 content). User
++    // reported "crafted Legendary but can't see it in inventory" — the
++    // Legendary tier was BELOW the scroll fold and the scroll wheel wasn't
++    // discoverable. Now the entire collection fits without scrolling on
++    // anything taller than ~800px viewport. Sub-800 viewports still scroll
++    // but at least the typical desktop session sees everything.
+     Element *elt = new Ui::VContainer({
+         header,
+-        new Ui::ScrollContainer(content, 500)
++        new Ui::ScrollContainer(content, 650)
+     }, 14, 8, {
+         .fill = 0xff7c5cb0,  // Omega-ish purple — matches hornex rarity-bg-8
+         .line_width = 6,
