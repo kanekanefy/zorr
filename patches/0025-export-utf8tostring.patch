@@ -1,0 +1,13 @@
+diff --git a/Client/CMakeLists.txt b/Client/CMakeLists.txt
+index b8268e1..0d3c6eb 100644
+--- a/Client/CMakeLists.txt
++++ b/Client/CMakeLists.txt
+@@ -87,7 +87,7 @@ else()
+     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -ffast-math --closure=1")
+ endif()
+ 
+-add_link_options(-sEXPORTED_RUNTIME_METHODS=stringToNewUTF8)
++add_link_options(-sEXPORTED_RUNTIME_METHODS=stringToNewUTF8,UTF8ToString)
+ add_link_options(-sEXPORTED_FUNCTIONS=_main,_key_event,_mouse_event,_touch_event,_wheel_event,_clipboard_event,_loop,_on_message,_qa_open_inventory,_qa_open_craft,_qa_close_panels,_qa_inventory_count,_qa_loadout_at,_qa_loadout_count,_qa_equip,_qa_craft_set_rarity,_qa_craft_add,_qa_craft_reset,_qa_craft_slot_count,_qa_craft_execute,_qa_last_craft_result,_qa_last_craft_success,_qa_last_craft_destroyed,_qa_alive,_qa_score,_qa_dump_state)
+ 
+ add_executable(gardn-client ${SRCS})
