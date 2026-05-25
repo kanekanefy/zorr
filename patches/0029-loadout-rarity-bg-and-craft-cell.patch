@@ -1,0 +1,96 @@
+diff --git a/Client/Ui/InGame/LoadoutSlot.cc b/Client/Ui/InGame/LoadoutSlot.cc
+index 96c13f4..a7c939c 100644
+--- a/Client/Ui/InGame/LoadoutSlot.cc
++++ b/Client/Ui/InGame/LoadoutSlot.cc
+@@ -2,7 +2,9 @@
+ 
+ #include <Client/Game.hh>
+ #include <Client/Input.hh>
++#include <Client/StaticData.hh>     // patch 0029: RARITY_COLORS
+ #include <Shared/Entity.hh>
++#include <Shared/StaticDefinitions.hh>  // patch 0029: PETAL_DATA, MAX_SLOT_COUNT
+ 
+ using namespace Ui;
+ 
+@@ -21,7 +23,20 @@ UiLoadoutSlot::UiLoadoutSlot(uint8_t pos) : Element(70, 70, { .fill = 0xffeeeeee
+ }
+ 
+ void UiLoadoutSlot::on_render(Renderer &ctx) {
++    // Patch 0029: tint slot background by equipped petal rarity. Empty
++    // slots keep the default off-white; the delete-slot (position ==
++    // 2*MAX_SLOT_COUNT) is handled by UiDeleteSlot's own ctor fill and
++    // skipped here. Result: a glance at the loadout row tells you the
++    // rarity distribution of your current build, matching how florr.io
++    // and hornex paint their slots.
++    uint32_t saved_fill = style.fill;
++    if (position < 2 * MAX_SLOT_COUNT) {
++        PetalID::T pid = Game::cached_loadout[position];
++        if (pid != PetalID::kNone)
++            style.fill = RARITY_COLORS[PETAL_DATA[pid].rarity];
++    }
+     Element::on_render(ctx);
++    style.fill = saved_fill;
+     if (Game::slot_indicator_opacity < 0.01) return;
+     if (position < Game::loadout_count) {
+         ctx.set_global_alpha(Game::slot_indicator_opacity);
+diff --git a/Client/Ui/TitleScreen/Craft.cc b/Client/Ui/TitleScreen/Craft.cc
+index a178f14..9271d2b 100644
+--- a/Client/Ui/TitleScreen/Craft.cc
++++ b/Client/Ui/TitleScreen/Craft.cc
+@@ -32,6 +32,7 @@
+ 
+ #include <format>
+ #include <unordered_map>
++#include <string>  // patch 0029: badge string concatenation
+ #include <vector>
+ 
+ using namespace Ui;
+@@ -95,18 +96,38 @@ public:
+         for (uint8_t i = 0; i < Game::craft_slot_count; ++i)
+             if (Game::craft_slots[i] == id) slotted++;
+         uint32_t avail = (slotted >= inv) ? 0 : (inv - slotted);
+-        // Count text at bottom
+-        float text_y = height / 2 - 8;
+-        ctx.translate(0, text_y);
+-        ctx.draw_text(format_score((float)avail).c_str(), {
+-            .fill = (avail > 0) ? 0xffffffff : 0xff888888,
+-            .size = 10
+-        });
+-        ctx.translate(0, -text_y);
+-        // Petal sprite above
+-        ctx.translate(0, -8);
++
++        // Patch 0029: match Inventory v4 (patch 0028) cell style — sprite
++        // up top, petal name middle-bottom, "x##" badge top-right last so
++        // it draws over everything else.
++        ctx.translate(0, -10);
+         ctx.scale(width / 60);
+         draw_loadout_background(ctx, id);
++        ctx.scale(60 / width);
++        ctx.translate(0, 10);
++
++        // Petal name strip
++        float ny = height / 2 - 9;
++        ctx.translate(0, ny);
++        ctx.draw_text(PETAL_DATA[id].name, {
++            .fill         = 0xffffffff,
++            .size         = 9,
++            .stroke_scale = 0.22,
++        });
++        ctx.translate(0, -ny);
++
++        // Top-right "x##" badge — dim when avail == 0 (everything is in
++        // the slots already).
++        std::string badge = std::string("x") + format_score((float)avail);
++        float bx = width / 2 - 13;
++        float by = -height / 2 + 10;
++        ctx.translate(bx, by);
++        ctx.draw_text(badge.c_str(), {
++            .fill         = (avail > 0) ? 0xffffffff : 0xff999999,
++            .size         = 12,
++            .stroke_scale = 0.25,
++        });
++        ctx.translate(-bx, -by);
+     }
+     virtual void on_event(uint8_t event) override {
+         if (event != kFocusLost) {
