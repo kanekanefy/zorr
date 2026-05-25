@@ -1,0 +1,107 @@
+diff --git a/Client/Game.cc b/Client/Game.cc
+index a9a91fc..43201d1 100644
+--- a/Client/Game.cc
++++ b/Client/Game.cc
+@@ -263,17 +263,15 @@ void Game::tick(double time) {
+         for (uint32_t i = 0; i < MAX_SLOT_COUNT + Game::loadout_count; ++i) {
+             cached_loadout[i] = player.get_loadout_ids(i);
+             Game::seen_petals[cached_loadout[i]] = 1;
+-            // Phase 6 craft: when a slot transitions to a different non-None
+-            // petal, that's a pickup event → increment persistent_inventory.
+-            // Filters out "still holding the same petal" (the common case).
+-            // Equipping from inventory triggers +1 again — acceptable for v1
+-            // (player choice; if abused we'll dedupe later).
+-            PetalID::T cur = cached_loadout[i];
+-            PetalID::T prev = Game::prev_cached_loadout[i];
+-            if (cur != prev && cur != PetalID::kNone) {
+-                Game::persistent_inventory[cur]++;
+-            }
+-            Game::prev_cached_loadout[i] = cur;
++            // Patch 0022: INVENTORY V2 REDESIGN — the increment trigger that
++            // used to live here (patch 0009: any cached_loadout transition →
++            // persistent_inventory[new]++) is removed. It double-counted with
++            // patch 0014's drop-disappearance heuristic AND it re-incremented
++            // every time you equipped from inventory, perfectly cancelling
++            // the local decrement, so inventory never went down on equip and
++            // grew on every pickup. SINGLE source of truth: pickups come via
++            // the drop-disappearance scan further down; equip/craft adjust
++            // locally; loadout sync (this loop) is read-only display.
+         }
+         score = player.get_score();
+         overlevel_timer = player.get_overlevel_timer();
+diff --git a/Client/Network.cc b/Client/Network.cc
+index f5a8c40..5d47fc0 100644
+--- a/Client/Network.cc
++++ b/Client/Network.cc
+@@ -102,16 +102,28 @@ void Game::equip_from_inventory(uint8_t pos, PetalID::T id) {
+     socket.send(writer.packet, writer.at - writer.packet);
+ }
+ 
+-// Patch 0021: click-to-equip. Find the first slot that's actually empty
+-// (kNone) — primary row first (preferred so the petal is immediately
+-// usable), then secondary row. Caller already validated id and aliveness.
+-// Returns 0xff if both rows are full (caller should leave drag mode on
+-// for a manual drop, or just silently no-op).
++// Patch 0021: click-to-equip. Patch 0022: extended to auto-replace the
++// lowest-rarity slot when all 16 slots are full.
++//
++// Resolution order:
++//   1. First empty primary slot  → put it there
++//   2. First empty secondary slot → put it there
++//   3. Lowest-rarity slot in EITHER row whose petal is strictly lower
++//      rarity than the new one → replace it (displaced petal refunds back
++//      to inventory). Guards against accidental downgrade — you can't lose
++//      a Mythic to a Common click.
++//   4. None of the above → return 0xff, no-op. Caller decides if to show
++//      a "loadout full" hint.
++//
++// All slot mutations go through equip_from_inventory which talks to the
++// server; client-local persistent_inventory bookkeeping happens here
++// (decrement new, refund old) so the UI updates instantly.
+ uint8_t Game::equip_to_first_empty(PetalID::T id) {
+     if (!Game::alive()) return 0xff;
+     if (id == PetalID::kNone || id >= PetalID::kNumPetals) return 0xff;
+     if (Game::persistent_inventory[id] == 0) return 0xff;
+-    // Primary: indices 0..loadout_count-1 in static-pos space.
++
++    // Step 1: empty primary
+     for (uint8_t pos = 0; pos < Game::loadout_count; ++pos) {
+         if (Game::cached_loadout[pos] == PetalID::kNone) {
+             Game::persistent_inventory[id]--;
+@@ -119,7 +131,7 @@ uint8_t Game::equip_to_first_empty(PetalID::T id) {
+             return pos;
+         }
+     }
+-    // Secondary: indices MAX_SLOT_COUNT..MAX_SLOT_COUNT+loadout_count-1.
++    // Step 2: empty secondary
+     for (uint8_t pos = MAX_SLOT_COUNT; pos < MAX_SLOT_COUNT + Game::loadout_count; ++pos) {
+         if (Game::cached_loadout[pos] == PetalID::kNone) {
+             Game::persistent_inventory[id]--;
+@@ -127,5 +139,25 @@ uint8_t Game::equip_to_first_empty(PetalID::T id) {
+             return pos;
+         }
+     }
+-    return 0xff;
++    // Step 3: replace lowest-rarity slot that's STRICTLY lower than new
++    uint8_t new_rarity = PETAL_DATA[id].rarity;
++    uint8_t target_pos = 0xff;
++    uint8_t target_rarity = new_rarity;  // strictly-less-than this
++    auto consider = [&](uint8_t pos) {
++        PetalID::T old = Game::cached_loadout[pos];
++        if (old == PetalID::kNone || old >= PetalID::kNumPetals) return;
++        uint8_t r = PETAL_DATA[old].rarity;
++        if (r < target_rarity) { target_rarity = r; target_pos = pos; }
++    };
++    for (uint8_t pos = 0; pos < Game::loadout_count; ++pos) consider(pos);
++    for (uint8_t pos = MAX_SLOT_COUNT; pos < MAX_SLOT_COUNT + Game::loadout_count; ++pos) consider(pos);
++
++    if (target_pos != 0xff) {
++        PetalID::T old_id = Game::cached_loadout[target_pos];
++        Game::persistent_inventory[id]--;
++        Game::persistent_inventory[old_id]++;  // refund the displaced petal
++        Game::equip_from_inventory(target_pos, id);
++        return target_pos;
++    }
++    return 0xff;  // every slot >= new petal's rarity, no downgrade allowed
+ }
+\ No newline at end of file
