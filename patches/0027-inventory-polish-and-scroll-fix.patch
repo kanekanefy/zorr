@@ -1,0 +1,117 @@
+diff --git a/Client/Ui/ScrollContainer.cc b/Client/Ui/ScrollContainer.cc
+index a6f69ab..b75a912 100644
+--- a/Client/Ui/ScrollContainer.cc
++++ b/Client/Ui/ScrollContainer.cc
+@@ -29,7 +29,26 @@ void ScrollContainer::on_render(Renderer &ctx) {
+     DEBUG_ONLY(assert(children.size() == 2));
+     Element *scroll = children[1];
+     Element *content = children[0];
++    // Patch 0027: hide scrollbar when no scrolling is needed.
++    //
++    // Old behavior:
++    //   - ScrollBar was always rendered as an HContainer child.
++    //   - When content fit inside viewport, the bar was visible at its
++    //     default 100px height and reserved horizontal space but did
++    //     nothing — wheel events were not processed.
++    //   - User report: "I see a scrollbar but mouse wheel doesn't move
++    //     it" — symptom of this exact condition (panel max_height bumped
++    //     to 650 in patch 0024, while collection grid is only ~580px).
++    //
++    // New behavior:
++    //   - When content fits, fully hide the bar (fill = 0) so the user
++    //     doesn't think it's interactive.
++    //   - Reset lerp_scroll to 0 so re-opening a previously-scrolled
++    //     panel starts at the top.
++    //   - When scrolling IS needed, restore the bar fill and run the
++    //     wheel/drag/touch math as before.
+     if (height < content->height) {
++        scroll->style.fill = 0x40000000;
+         scroll->height = height * height / content->height;
+         float ratio = height == scroll->height ? 1 : (content->height - height) / (height - scroll->height);
+         if (std::abs(Input::mouse_x - screen_x) < width * Ui::scale / 2
+@@ -46,8 +65,11 @@ void ScrollContainer::on_render(Renderer &ctx) {
+         lerp_scroll = fclamp(lerp_scroll, 0, height - scroll->height);
+         scroll->y = lerp(scroll->y, lerp_scroll, Ui::lerp_amount);
+         content->y = lerp(content->y, -ratio * lerp_scroll, Ui::lerp_amount);
+-    } else 
++    } else {
++        scroll->style.fill = 0;
+         content->y = scroll->y = 0;
++        lerp_scroll = 0;
++    }
+     RenderContext c(&ctx);
+     ctx.clip_rect(0,0,width,height);
+     for (Element *elt : children) {
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index d693044..c50130d 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -80,19 +80,33 @@ namespace {
+             style.stroke_hsv = saved_stroke;
+             style.line_width = saved_lw;
+ 
+-            // Count text — only for owned petals
++            // Patch 0027: count badge moved from BOTTOM-CENTER to TOP-RIGHT
++            // corner with a leading "x" — matches hornex's "x44" / "x500k"
++            // style. draw_text auto-strokes black around the white digits
++            // (TextArgs.stroke_scale default 0.12, bumped to 0.18 here for
++            // legibility over the saturated rarity background). Drawn BEFORE
++            // the petal sprite so the sprite's scale transform doesn't carry
++            // over — translate is undone immediately so the cell-local
++            // coordinate frame stays clean for the sprite path.
+             if (owned) {
+-                float text_y = height / 2 - 8;
+-                ctx.translate(0, text_y);
+-                ctx.draw_text(format_score((float)n).c_str(), {
++                std::string badge = std::string("x") + format_score((float)n);
++                // Place badge centre roughly 14px in from the right edge and
++                // 10px down from the top. gardn's text is center-aligned, so
++                // this puts the badge text neatly tucked in the top-right.
++                float bx = width / 2 - 14;
++                float by = -height / 2 + 10;
++                ctx.translate(bx, by);
++                ctx.draw_text(badge.c_str(), {
+                     .fill = 0xffffffff,
+-                    .size = 10
++                    .size = 13,
++                    .stroke_scale = 0.18,
+                 });
+-                ctx.translate(0, -text_y);
++                ctx.translate(-bx, -by);
+             }
++
+             // Petal sprite — full alpha if owned, faint if not (still shows
+-            // shape so the cell is identifiable).
+-            ctx.translate(0, -7);
++            // shape so the cell is identifiable as a collection slot).
++            ctx.translate(0, -4);
+             ctx.scale(width / 60);
+             if (!owned) ctx.set_global_alpha(0.18f);
+             draw_loadout_background(ctx, id);
+@@ -157,16 +171,17 @@ Element *Ui::make_inventory_panel() {
+     // as the FIRST child (above the grid) instead of after — this way it
+     // doesn't accumulate layout error from rows below. It's also still
+     // dynamic so the number updates live.
++    // Patch 0027: subtitle simplified to match hornex's terse hint
++    // ("Drag n drop to equip petal."). The previous wording was
++    // ("Owned X petals. Click to equip, drag to specific slot.") — three
++    // sentences when one is enough. Click-to-equip is still implemented
++    // (see InventoryPetalCell::on_event) and discoverable on hover/try.
++    // Total-count text removed to reduce noise; the per-cell "x##" badges
++    // already convey "you have a lot of this one".
+     Element *content = new Ui::VContainer({
+-        new Ui::DynamicText(11, []() {
+-            uint32_t total = 0;
+-            for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id)
+-                total += Game::persistent_inventory[id];
+-            if (total == 0)
+-                return std::string("Pick up petals from defeated mobs. Click any cell to equip.");
+-            return std::string("Owned ") + format_score((float)total)
+-                + " petals. Click to equip, drag to specific slot.";
+-        }, { .fill = 0xffcccccc, .h_justify = Style::Left }),
++        new Ui::StaticText(11, "Drag or click cells to equip.", {
++            .fill = 0xffd8d8d8, .h_justify = Style::Left
++        }),
+         grid
+     }, 0, 8, { .h_justify = Style::Left });
+ 
