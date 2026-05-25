@@ -85,6 +85,30 @@ git push    # 触发自动 deploy
 
 这些是我(上一个 agent)从编译报错里学来的,新人写代码时容易踩。
 
+### VContainer/HContainer + add_child 不会设 justify(踩了 5 个补丁的坑)
+
+`VContainer({elts...}, ...)` 的 ctor 会把 `elts` 里每个元素的 `v_justify` 强行覆盖成 `Style::Top`。`HContainer({elts...}, ...)` 同理覆盖 `h_justify=Left`。
+
+但是 **`add_child()` 不碰 style**。所以下面这两种写法布局结果**完全不一样**:
+
+```cpp
+// ✅ rows 拿到 v_justify=Top
+Element *grid = new VContainer({row1, row2, row3}, 0, 6, {.h_justify=Style::Left});
+
+// ❌ rows 保留默认 v_justify=Middle —— bug
+Element *grid = new VContainer({}, 0, 6, {.h_justify=Style::Left});
+grid->add_child(row1);
+grid->add_child(row2);
+```
+
+错误版本的后果:`Container::on_render` 把每个 row 平移 `row.y + v_justify*(grid.h - row.h)/2`。`v_justify=Middle=0` 时第二项为 0,所以 row 中心被画在 `grid_center + row.y`(从 grid 中心算起,不是 grid 顶)。第 0 行落在 grid 正中,后续 row 一路下移,**最后几行掉出 grid_bottom 被 ScrollContainer.clip_rect 吞掉**。视觉上"上面空一大段,cells 从中间开始,最后看不到几行"——这就是 patch 0035 修的 bug,前面 5 个补丁(0027/0028/0031/0033)都没看出来。
+
+**修法二选一**:
+1. 把 rows 一次性传给 ctor(像 content 那样: `new VContainer({desc, grid}, ...)`)
+2. 在 row 自己的 Style 里显式写 `.v_justify = Style::Top`(像 `PetalGallery.cc:72` 那样)
+
+**怎么察觉**:任何时候 layout 跑偏 + 用了 `add_child`,先检查 child 的 `h_justify`/`v_justify` 默认值是否正确(默认都是 `Center/Middle = 0`)。
+
 ### Renderer API ≠ Canvas2D
 
 gardn 的 `Client/Render/Renderer.hh` 用了和 Canvas2D **同义但不同名**的方法:

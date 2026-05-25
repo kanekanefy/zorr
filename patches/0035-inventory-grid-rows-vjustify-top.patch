@@ -1,0 +1,39 @@
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index d693044..91ee672 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -138,10 +138,20 @@ Element *Ui::make_inventory_panel() {
+     });
+ 
+     constexpr uint8_t COLS = 6;
+-    // Patch 0023: row-level should_render gate also removed (same root cause
+-    // as the cell gate — VContainer skips position updates for hidden rows,
+-    // corrupting layout when other rows toggle visibility). All rows now
+-    // render unconditionally; layout is stable.
++    // Patch 0035: rows need `v_justify = Style::Top` explicitly.
++    //
++    // VContainer's ctor sets v_justify=Top only on children passed via the
++    // ctor's elts vector — add_child() never touches style. Default
++    // v_justify is Middle (=0). With that default, Container::on_render
++    // translated each row by `row.y + 0` from the grid CENTER instead of
++    // `row.y - (grid.h - row.h)/2` from the grid TOP. Result: row 0
++    // rendered at grid_center, row 1 at grid_center+row_pitch, … last
++    // rows spilled past grid_bottom and were clipped by ScrollContainer.
++    // User saw "big empty at top, cells start halfway down, can't scroll
++    // to the last rows". This bug survived patches 0027 / 0028 / 0031 /
++    // 0033 because every attempt reworked cell visuals, scroll math, or
++    // header — never row construction. Pattern matches PetalGallery.cc:72
++    // which also sets v_justify=Top on rows added via add_child.
+     Element *grid = new Ui::VContainer({}, 0, 6, { .h_justify = Style::Left });
+     for (size_t i = 0; i < ids.size(); i += COLS) {
+         std::vector<Element *> row;
+@@ -149,7 +159,8 @@ Element *Ui::make_inventory_panel() {
+             row.push_back(new InventoryPetalCell(ids[j], 50));
+         }
+         grid->add_child(new Ui::HContainer(row, 0, 6, {
+-            .h_justify = Style::Left
++            .h_justify = Style::Left,
++            .v_justify = Style::Top
+         }));
+     }
+ 
