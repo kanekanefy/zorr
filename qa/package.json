@@ -1,0 +1,13 @@
+{
+  "name": "zorr-qa",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Post-deploy smoke test for zorr — calls Module._qa_* hooks via Playwright.",
+  "scripts": {
+    "test": "node test.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.49.0"
+  }
+}
