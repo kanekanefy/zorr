@@ -1,0 +1,479 @@
+diff --git a/Client/Ui/ScrollContainer.cc b/Client/Ui/ScrollContainer.cc
+index 1c69f0c..a1e4e51 100644
+--- a/Client/Ui/ScrollContainer.cc
++++ b/Client/Ui/ScrollContainer.cc
+@@ -29,26 +29,7 @@ void ScrollContainer::on_render(Renderer &ctx) {
+     DEBUG_ONLY(assert(children.size() == 2));
+     Element *scroll = children[1];
+     Element *content = children[0];
+-    // Patch 0027: hide scrollbar when no scrolling is needed.
+-    //
+-    // Old behavior:
+-    //   - ScrollBar was always rendered as an HContainer child.
+-    //   - When content fit inside viewport, the bar was visible at its
+-    //     default 100px height and reserved horizontal space but did
+-    //     nothing — wheel events were not processed.
+-    //   - User report: "I see a scrollbar but mouse wheel doesn't move
+-    //     it" — symptom of this exact condition (panel max_height bumped
+-    //     to 650 in patch 0024, while collection grid is only ~580px).
+-    //
+-    // New behavior:
+-    //   - When content fits, fully hide the bar (fill = 0) so the user
+-    //     doesn't think it's interactive.
+-    //   - Reset lerp_scroll to 0 so re-opening a previously-scrolled
+-    //     panel starts at the top.
+-    //   - When scrolling IS needed, restore the bar fill and run the
+-    //     wheel/drag/touch math as before.
+     if (height < content->height) {
+-        scroll->style.fill = 0x40000000;
+         scroll->height = height * height / content->height;
+         float ratio = height == scroll->height ? 1 : (content->height - height) / (height - scroll->height);
+         if (std::abs(Input::mouse_x - screen_x) < width * Ui::scale / 2
+@@ -65,11 +46,8 @@ void ScrollContainer::on_render(Renderer &ctx) {
+         lerp_scroll = fclamp(lerp_scroll, 0, height - scroll->height);
+         scroll->y = lerp(scroll->y, lerp_scroll, Ui::lerp_amount);
+         content->y = lerp(content->y, -ratio * lerp_scroll, Ui::lerp_amount);
+-    } else {
+-        scroll->style.fill = 0;
++    } else
+         content->y = scroll->y = 0;
+-        lerp_scroll = 0;
+-    }
+     RenderContext c(&ctx);
+     ctx.clip_rect(0,0,width,height);
+     for (Element *elt : children) {
+@@ -93,30 +71,6 @@ void ScrollContainer::refactor() {
+     width -= inner_pad;
+ }
+ 
+-// Patch 0033: reset scroll state when the ScrollContainer goes off-screen.
+-//
+-// Without this, lerp_scroll and content->y persist across panel close /
+-// reopen — so if the user scrolled the inventory to the bottom, closed it,
+-// then opened it again, they'd see whatever was at scroll-bottom (often
+-// empty space past the last row, because the content is taller than the
+-// viewport and the bottom of content sits ABOVE the last bit of visible
+-// area). The user has to scroll UP to find their petals again. Reported
+-// as "open inventory → blank panel → have to scroll a screen to see the
+-// first item".
+-//
+-// Fix: reset both lerp_scroll AND content->y to 0 whenever the SC is
+-// being skipped (parent panel closed or animating out). on_render_skip is
+-// called every frame the element is invisible, so by the time the panel
+-// re-opens, scroll state is guaranteed at the top.
+-void ScrollContainer::on_render_skip(Renderer &ctx) {
+-    lerp_scroll = 0;
+-    if (children.size() >= 2) {
+-        children[0]->y = 0;   // content
+-        children[1]->y = 0;   // scrollbar
+-    }
+-    Element::on_render_skip(ctx);
+-}
+-
+ void ScrollContainer::poll_events(ScreenEvent const &event) {
+     Element::poll_events(event);
+     if (Ui::focused == this)
+diff --git a/Client/Ui/ScrollContainer.hh b/Client/Ui/ScrollContainer.hh
+index 6f2784d..0cc8a20 100644
+--- a/Client/Ui/ScrollContainer.hh
++++ b/Client/Ui/ScrollContainer.hh
+@@ -18,7 +18,6 @@ namespace Ui {
+         ScrollContainer(Element *, float);
+ 
+         virtual void on_render(Renderer &) override;
+-        virtual void on_render_skip(Renderer &) override;
+         virtual void poll_events(ScreenEvent const &) override;
+         virtual void refactor() override;
+     };
+diff --git a/Client/Ui/TitleScreen/Inventory.cc b/Client/Ui/TitleScreen/Inventory.cc
+index 2b6b4f3..d693044 100644
+--- a/Client/Ui/TitleScreen/Inventory.cc
++++ b/Client/Ui/TitleScreen/Inventory.cc
+@@ -1,43 +1,20 @@
+-// Patch 0031: Inventory v4 — clean rewrite using understood mental model.
++// Phase 6 (Patch 0010 rewrite): Inventory panel — lifetime petal counts.
+ //
+-// I spent the previous 4 patches on this panel (0022, 0023, 0027, 0028) and
+-// the last two regressed things. After reading Element / Container / Renderer
+-// / ScrollContainer end to end I now know exactly what was wrong and why:
++// Layout: a 6-column grid sorted by (rarity ASC, petal_id ASC). Empty cells
++// (count == 0) hide via per-cell should_render. Format counts with
++// format_score (5_000 → "5k", 5e6 → "5m").
+ //
+-//   - 0027 drew the count badge BEFORE the sprite. The sprite's scaled
+-//     translate frame extended into the top-right corner and painted over
+-//     the badge text. User saw "counts disappeared".
+-//   - 0028 used manual `scale(1/0.62)` to undo the sprite scale before
+-//     drawing the name. Floating-point error left a dirty transform; the
+-//     name/badge ended up at slightly wrong coords and the ScrollContainer
+-//     clip probably cropped them. Whole panel looked like an empty box.
+-//   - 0028 also nested an HContainer inside an HFlexContainer for the
+-//     Wipe+title header. HFlex stretches its own width to parent, then
+-//     applies h_justify shift to the nested HContainer, then the nested
+-//     HContainer applies its own h_justify shift to wipe — both shifts
+-//     compound LEFTWARD and push the wipe button OUT of the panel.
+-//
+-// v4 ironclad rules (don't break these):
+-//
+-//   1. Inside any nested transform, wrap it in a `RenderContext` so the
+-//      matrix + canvas state auto-restores. Never use manual inverse-scale.
+-//   2. Draw order for cells: bg → sprite → name → BADGE (badge is LAST so
+-//      nothing paints over it).
+-//   3. Header stays in the proven v3 layout: HFlex(title, close). Wipe
+-//      lives as a separate row at the BOTTOM of the panel (footer), where
+-//      it can't muck with the title alignment math.
+-//   4. ScrollContainer max_height = 360. Total grid ~840px so the bar is
+-//      ALWAYS active. No more "scrollbar disappeared" bug.
+-//   5. Cell 60×80 with sprite top, name middle-bottom, badge top-right.
+-//   6. petal_name rendered at 9pt with stroke 0.22 for readability over
+-//      saturated rarity backgrounds.
++// Patch 0010 changes from v1:
++//   - True multi-col grid (was: row-per-rarity HContainer).
++//   - Drops `Game::should_render_title_ui()` gate — panel must stay open
++//     when the player enters the game. Lives in other_ui_window now.
+ 
+ #include <Client/Ui/TitleScreen/TitleScreen.hh>
+ 
+-#include <Client/Ui/Button.hh>
+ #include <Client/Ui/Container.hh>
+ #include <Client/Ui/ScrollContainer.hh>
+ #include <Client/Ui/StaticText.hh>
++#include <Client/Ui/DynamicText.hh>
+ #include <Client/Ui/Extern.hh>
+ #include <Client/Ui/InGame/Loadout.hh>
+ 
+@@ -48,124 +25,108 @@
+ #include <Helpers/Math.hh>
+ 
+ #include <algorithm>
+-#include <string>
+ #include <vector>
+ 
+ using namespace Ui;
+ 
+ namespace {
+-
+-class InventoryPetalCell final : public Element {
+-public:
+-    PetalID::T id;
+-    InventoryPetalCell(PetalID::T pid)
+-        : Element(60, 80, {
+-            .fill         = RARITY_COLORS[PETAL_DATA[pid].rarity],
+-            .stroke_hsv   = 0.85f,
+-            .line_width   = 2,
+-            .round_radius = 5,
+-            .v_justify    = Style::Top,
+-        }), id(pid) {}
+-
+-    void on_render(Renderer &ctx) override {
+-        uint32_t n = Game::persistent_inventory[id];
+-        bool owned = n > 0;
+-
+-        // --- 1) Background (with style swap for unowned/dragging) ------
+-        uint32_t saved_fill = style.fill;
+-        float    saved_hsv  = style.stroke_hsv;
+-        float    saved_lw   = style.line_width;
+-        if (!owned) {
+-            style.fill       = 0xff2e2e2e;
+-            style.stroke_hsv = 0.5f;
+-            style.line_width = 1;
+-        } else if (Game::inventory_drag_id == id) {
+-            style.stroke_hsv = 1.4f;
+-            style.line_width = 4;
+-        }
+-        Element::on_render(ctx);
+-        style.fill       = saved_fill;
+-        style.stroke_hsv = saved_hsv;
+-        style.line_width = saved_lw;
+-
+-        // --- 2) Petal sprite, top half of cell -------------------------
+-        // Wrap in RenderContext so the scale + translate + alpha changes
+-        // auto-restore. NO manual inverse-scale.
+-        {
+-            RenderContext sprite_scope(&ctx);
+-            ctx.translate(0, -12);
+-            ctx.scale(0.62f);
+-            if (!owned) ctx.set_global_alpha(0.22f);
++    // Patch 0023: cells ALWAYS render — Pokédex style.
++    //
++    // Previously cells gated rendering on `persistent_inventory[id] > 0`. This
++    // interacted badly with VContainer::refactor (Client/Ui/Container.cc:79)
++    // which SKIPS position updates for `!visible` elements. When a row
++    // toggled from visible→invisible→visible (e.g., on pickup of a petal
++    // type previously at 0), the row's `y` stayed at its stale value, and
++    // rows below the toggled one ended up at the wrong vertical offset.
++    // Symptom in 0022: "Total petals owned" text rendered BETWEEN rows and
++    // some petal cells rendered OUTSIDE the panel boundary.
++    //
++    // Fix: cells always render (count = 0 → dim grey, no sprite, no count
++    // badge). Layout becomes stable because no element ever changes
++    // visibility. As a bonus, this is now Pokédex-style — players see the
++    // full collection and know what they haven't found yet.
++    class InventoryPetalCell final : public Element {
++    public:
++        PetalID::T id;
++        InventoryPetalCell(PetalID::T pid, float w)
++            : Element(w, w + 14, {
++                // fill is set dynamically in on_render based on owned-state.
++                .fill = RARITY_COLORS[PETAL_DATA[pid].rarity],
++                .stroke_hsv = 0.85,
++                .line_width = 2,
++                .round_radius = w / 16,
++                // ALWAYS render — no should_render gate.
++                .v_justify = Style::Top
++            }), id(pid) {}
++        virtual void on_render(Renderer &ctx) override {
++            uint32_t n = Game::persistent_inventory[id];
++            bool owned = n > 0;
++            // Save & swap styles for owned vs unowned visual.
++            uint32_t saved_fill = style.fill;
++            float saved_stroke = style.stroke_hsv;
++            float saved_lw = style.line_width;
++            if (!owned) {
++                // Unowned: dim grey background with no rarity hue.
++                style.fill = 0xff3a3a3a;
++                style.stroke_hsv = 0.45f;
++                style.line_width = 1;
++            } else if (Game::inventory_drag_id == id) {
++                // Active drag source: bright border.
++                style.stroke_hsv = 1.4f;
++                style.line_width = 4;
++            }
++            Element::on_render(ctx);
++            style.fill = saved_fill;
++            style.stroke_hsv = saved_stroke;
++            style.line_width = saved_lw;
++
++            // Count text — only for owned petals
++            if (owned) {
++                float text_y = height / 2 - 8;
++                ctx.translate(0, text_y);
++                ctx.draw_text(format_score((float)n).c_str(), {
++                    .fill = 0xffffffff,
++                    .size = 10
++                });
++                ctx.translate(0, -text_y);
++            }
++            // Petal sprite — full alpha if owned, faint if not (still shows
++            // shape so the cell is identifiable).
++            ctx.translate(0, -7);
++            ctx.scale(width / 60);
++            if (!owned) ctx.set_global_alpha(0.18f);
+             draw_loadout_background(ctx, id);
+-        }   // ← matrix + alpha restored on scope exit
+-
+-        // --- 3) Petal name, bottom of cell -----------------------------
+-        // Cell-local coords (no scale leak from sprite). 9pt with thick
+-        // black outline for legibility on any rarity background.
+-        if (owned) {
+-            float ny = height / 2 - 9;
+-            ctx.translate(0, ny);
+-            ctx.draw_text(PETAL_DATA[id].name, {
+-                .fill         = 0xffffffff,
+-                .size         = 9,
+-                .stroke_scale = 0.22,
+-            });
+-            ctx.translate(0, -ny);
+-        }
+-
+-        // --- 4) Count badge, top-right (LAST so nothing paints over) ---
+-        // Format "x44" / "x5k" / "x500m". Tucked into the top-right
+-        // corner of the cell.
+-        if (owned) {
+-            std::string badge = std::string("x") + format_score((float)n);
+-            float bx = width  / 2 - 14;
+-            float by = -height / 2 + 10;
+-            ctx.translate(bx, by);
+-            ctx.draw_text(badge.c_str(), {
+-                .fill         = 0xffffffff,
+-                .size         = 12,
+-                .stroke_scale = 0.25,
+-            });
+-            ctx.translate(-bx, -by);
+         }
+-    }
+-
+-    void on_event(uint8_t event) override {
+-        // Unowned cells are inert.
+-        if (Game::persistent_inventory[id] == 0) {
+-            rendering_tooltip = 0;
+-            return;
++        virtual void on_event(uint8_t event) override {
++            if (event == kMouseDown) {
++                if (Game::alive() && Game::persistent_inventory[id] > 0) {
++                    Game::inventory_drag_id = id;
++                }
++            }
++            if (event == kClick) {
++                // Click-to-equip. equip_to_first_empty handles all three
++                // resolution paths (empty primary → empty secondary →
++                // replace lowest-rarity slot lower than this petal).
++                if (Game::alive() && Game::persistent_inventory[id] > 0) {
++                    Game::equip_to_first_empty(id);
++                }
++                Game::inventory_drag_id = PetalID::kNone;
++            }
++            // Only show tooltip for owned petals — keeps the unowned dim
++            // cells from triggering tooltip noise on hover.
++            if (event != kFocusLost && Game::persistent_inventory[id] > 0) {
++                rendering_tooltip = 1;
++                tooltip = Ui::UiLoadout::petal_tooltips[id];
++            } else {
++                rendering_tooltip = 0;
++            }
+         }
+-        if (event == kMouseDown && Game::alive()) {
+-            Game::inventory_drag_id = id;
+-        }
+-        if (event == kClick && Game::alive()) {
+-            Game::equip_to_first_empty(id);
+-            Game::inventory_drag_id = PetalID::kNone;
+-        }
+-        if (event != kFocusLost) {
+-            rendering_tooltip = 1;
+-            tooltip = Ui::UiLoadout::petal_tooltips[id];
+-        } else {
+-            rendering_tooltip = 0;
+-        }
+-    }
+-};
+-
+-// Wipe button callback. Free function — gardn's Button takes a function
+-// pointer, not std::function, so capturing lambdas don't convert.
+-void wipe_inventory_cb(Element *, uint8_t event) {
+-    if (event != Ui::kClick) return;
+-    for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
+-        Game::persistent_inventory[id] = 0;
+-    }
++    };
+ }
+ 
+-} // namespace
+-
+ Element *Ui::make_inventory_panel() {
+-    // Sort: rarity ASC, then PetalID ASC. Rows end up grouped by rarity
+-    // (Common first), giving the hornex-style visual grouping for free.
++    // Sort: rarity ASC then PetalID ASC. Stable so same-rarity petals stay
++    // in PetalID order (mirrors gardn's PETAL_DATA enum layout).
+     std::vector<PetalID::T> ids;
+     for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id) {
+         ids.push_back(id);
+@@ -176,63 +137,63 @@ Element *Ui::make_inventory_panel() {
+         return a < b;
+     });
+ 
+-    // 5 cols × 10 rows = 50 cells for 49 petals + 1 spare. Cells 60×80
+-    // give breathing room for sprite + name + badge.
+-    constexpr uint8_t COLS = 5;
+-    Element *grid = new Ui::VContainer({}, 0, 4, { .h_justify = Style::Left });
++    constexpr uint8_t COLS = 6;
++    // Patch 0023: row-level should_render gate also removed (same root cause
++    // as the cell gate — VContainer skips position updates for hidden rows,
++    // corrupting layout when other rows toggle visibility). All rows now
++    // render unconditionally; layout is stable.
++    Element *grid = new Ui::VContainer({}, 0, 6, { .h_justify = Style::Left });
+     for (size_t i = 0; i < ids.size(); i += COLS) {
+         std::vector<Element *> row;
+         for (size_t j = i; j < i + COLS && j < ids.size(); ++j) {
+-            row.push_back(new InventoryPetalCell(ids[j]));
++            row.push_back(new InventoryPetalCell(ids[j], 50));
+         }
+-        grid->add_child(new Ui::HContainer(row, 0, 4, {
+-            .h_justify = Style::Left,
++        grid->add_child(new Ui::HContainer(row, 0, 6, {
++            .h_justify = Style::Left
+         }));
+     }
+ 
++    // Patch 0023: "Total petals owned" text moved INSIDE the scroll area
++    // as the FIRST child (above the grid) instead of after — this way it
++    // doesn't accumulate layout error from rows below. It's also still
++    // dynamic so the number updates live.
+     Element *content = new Ui::VContainer({
+-        new Ui::StaticText(11, "Drag or click cells to equip.", {
+-            .fill      = 0xffd0d0d0,
+-            .h_justify = Style::Left,
+-        }),
+-        grid,
+-    }, 0, 6, { .h_justify = Style::Left });
+-
+-    // Header: proven v3 layout — HFlex(title, close). DO NOT nest
+-    // an HContainer in here (that was the patch-0028 wipe-out-of-panel
+-    // bug). Wipe button goes in a separate footer row below.
++        new Ui::DynamicText(11, []() {
++            uint32_t total = 0;
++            for (PetalID::T id = PetalID::kBasic; id < PetalID::kNumPetals; ++id)
++                total += Game::persistent_inventory[id];
++            if (total == 0)
++                return std::string("Pick up petals from defeated mobs. Click any cell to equip.");
++            return std::string("Owned ") + format_score((float)total)
++                + " petals. Click to equip, drag to specific slot.";
++        }, { .fill = 0xffcccccc, .h_justify = Style::Left }),
++        grid
++    }, 0, 8, { .h_justify = Style::Left });
++
++    // Patch 0017: title row uses HFlexContainer so the close X sits hard-right
++    // while "Inventory" stays left. HFlexContainer auto-stretches to parent
++    // width on render.
+     Element *header = new Ui::HFlexContainer(
+         new Ui::StaticText(22, "Inventory"),
+         Ui::make_panel_close_button(),
+         0, 0, { .h_justify = Style::Left });
+-
+-    // Wipe footer row. Single-element HContainer with h_justify=Left so
+-    // the button sits at the bottom-left of the panel and can't muck
+-    // with the title alignment math up top.
+-    Element *wipe_row = new Ui::HContainer({
+-        new Ui::Button(98, 22,
+-            new Ui::StaticText(11, "Wipe inventory", { .fill = 0xffffffff }),
+-            wipe_inventory_cb, nullptr,
+-            {
+-                .fill         = 0xffc44848,
+-                .stroke_hsv   = 0.65f,
+-                .line_width   = 2,
+-                .round_radius = 4,
+-            }),
+-    }, 0, 0, { .h_justify = Style::Left });
+-
+-    // ScrollContainer max_height = 360. The grid is ~840px tall (10 rows
+-    // × 84px), so the bar is ALWAYS active and the wheel ALWAYS works.
+-    // ~4 rows visible at a time on a 600px viewport; user scrolls for
+-    // the rest. Better than "fits in code but clipped by browser edge".
++    // Patch 0024: scroll height 500→650 to fit ALL ~9 rows of the always-
++    // rendered grid (~9 × 64px row + header text = ~600 content). User
++    // reported "crafted Legendary but can't see it in inventory" — the
++    // Legendary tier was BELOW the scroll fold and the scroll wheel wasn't
++    // discoverable. Now the entire collection fits without scrolling on
++    // anything taller than ~800px viewport. Sub-800 viewports still scroll
++    // but at least the typical desktop session sees everything.
+     Element *elt = new Ui::VContainer({
+         header,
+-        new Ui::ScrollContainer(content, 360),
+-        wipe_row,
++        new Ui::ScrollContainer(content, 650)
+     }, 14, 8, {
+-        .fill         = 0xff7c5cb0,
+-        .line_width   = 6,
++        .fill = 0xff7c5cb0,  // Omega-ish purple — matches hornex rarity-bg-8
++        .line_width = 6,
+         .round_radius = 4,
++        // Patch 0012: slide in from the LEFT (out from under the sidebar)
++        // instead of UP from the bottom — the panel now anchors center-left
++        // so an upward slide would cross the middle of the screen.
+         .animate = [](Element *e, Renderer &ctx) {
+             ctx.translate(-(1 - e->animation) * (e->width + 80), 0);
+         },
+@@ -240,8 +201,12 @@ Element *Ui::make_inventory_panel() {
+             return Ui::panel_open == Panel::kInventory;
+         },
+         .h_justify = Style::Left,
+-        .v_justify = Style::Middle,
++        .v_justify = Style::Middle
+     });
++    // Patch 0012: anchor next to the sidebar (sidebar is 44 wide + x=12),
++    // vertically centered so we never overlap the level bar or loadout strip
++    // at the bottom of the screen. h_justify=Left + v_justify=Middle means
++    // the panel's left edge sits 70px from the window left, vertical middle.
+     elt->x = 70;
+     Ui::Panel::inventory = elt;
+     return elt;
